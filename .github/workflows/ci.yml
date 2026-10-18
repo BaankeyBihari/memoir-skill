@@ -23,7 +23,7 @@ jobs:
           python - <<'PY'
           import os, re, sys
           from pathlib import Path
-          skill = Path("memoir")
+          skill = Path("skills/memoir")
           text = (skill / "SKILL.md").read_text()
           m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
           assert m, "SKILL.md: missing frontmatter"
