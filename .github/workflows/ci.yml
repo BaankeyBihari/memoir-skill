@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Test CLI
+        run: python test_memoir.py
+      - name: Validate skill
+        run: |
+          python - <<'PY'
+          import os, re, sys
+          from pathlib import Path
+          skill = Path("memoir")
+          text = (skill / "SKILL.md").read_text()
+          m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+          assert m, "SKILL.md: missing frontmatter"
+          meta = dict(line.split(":", 1) for line in m.group(1).splitlines() if ":" in line)
+          name, desc = meta.get("name", "").strip(), meta.get("description", "").strip()
+          assert re.fullmatch(r"[a-z0-9-]{1,64}", name), f"bad name: {name!r}"
+          assert name == skill.name, f"name {name!r} != folder {skill.name!r}"
+          assert 0 < len(desc) <= 1024, f"description length {len(desc)}"
+          assert os.access(skill / "scripts" / "memoir.py", os.X_OK), "memoir.py not executable"
+          print("skill ok")
+          PY
