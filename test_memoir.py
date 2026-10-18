@@ -1,11 +1,11 @@
-"""Self-check for memoir/scripts/memoir.py. Run: python3 test_memoir.py"""
+"""Self-check for skills/memoir/scripts/memoir.py. Run: python3 test_memoir.py"""
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent / "memoir" / "scripts" / "memoir.py"
+SCRIPT = Path(__file__).parent / "skills" / "memoir" / "scripts" / "memoir.py"
 
 
 def run(store: Path, *args: str) -> subprocess.CompletedProcess:

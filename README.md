@@ -9,7 +9,7 @@ Full requirements: [system_requirements_document_memoir_skill.md](system_require
 Requires Python 3.11+. [`uv`](https://docs.astral.sh/uv/) is optional.
 
 ```sh
-ln -s "$PWD/memoir" ~/.claude/skills/memoir
+ln -s "$PWD/skills/memoir" ~/.claude/skills/memoir
 ```
 
 Restart Claude Code. `/memoir` is now available in every project.
@@ -39,7 +39,7 @@ When `[text]` is empty, the content is extracted from the recent conversation.
 
 ## CLI
 
-`memoir/scripts/memoir.py` runs directly through its `uv` shebang, or with `python3`.
+`skills/memoir/scripts/memoir.py` runs directly through its `uv` shebang, or with `python3`.
 
 | Command | Effect |
 |---|---|
