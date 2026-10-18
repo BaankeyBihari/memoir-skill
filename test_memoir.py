@@ -47,4 +47,8 @@ with tempfile.TemporaryDirectory() as tmp:
     home_store = run(Path("~/memoir-test-x"), "path").stdout.strip()
     assert home_store == str(Path.home() / "memoir-test-x"), home_store
 
+always_on = (SCRIPT.parents[1] / "references" / "always-on.md").read_text()
+block = always_on[always_on.index("```markdown"):always_on.rindex("```") + 3]
+assert block in (Path(__file__).parent / "README.md").read_text(), "README always-on block drifted"
+
 print("ok")
