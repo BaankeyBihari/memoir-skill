@@ -1,6 +1,6 @@
 ---
 name: memoir
-description: Persist decisions, logs, references and working state to project-local files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|state|coach|reload, or when the user asks to save a decision, snapshot progress, decide whether to clear context, or restore the last session.
+description: Persist decisions, logs, references and working state to project-local files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|state|coach|reload, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, snapshot progress, decide whether to clear context, or restore the last session.
 ---
 
 # Role
@@ -28,6 +28,8 @@ Decision:
     Supersedes: <decision-filename.md | none>
     Decision: <one or two sentences>
     Why: <one or two sentences>
+    Alternatives: <rejected options and why | none>
+    Deferred: <what was postponed and when to revisit | none>
 
 Log:
 
@@ -59,6 +61,7 @@ State (max 3 bullets per section):
 Execute each command with your native file-writing tools, targeting the absolute active directory. Confirm each write in one line with the full path. When `[text]` is empty, extract the content from the recent conversation.
 
 * `/memoir decision [text]`: write `decision-{slug}.md`. If it replaces an earlier decision in the active directory, name that file in `Supersedes:`.
+* Automatic decisions: when the user chooses among alternatives or says "decision:" or "let's go with X", write `decision-{slug}.md` as above without waiting for `/memoir decision` (FR-3.8).
 * `/memoir log [text]`: write `log-{slug}.md`.
 * `/memoir reference [text]`: write `reference-{slug}.md`.
 * `/memoir state`: overwrite `state-current.md` using the state format above.
@@ -85,3 +88,6 @@ Execute each command with your native file-writing tools, targeting the absolute
   3. If it prints "No recorded session found", reply "No recorded session in <path>. Starting fresh." and stop.
   4. Otherwise read every file it lists, in order, starting with `state-current.md`.
   5. Reply with the restored Goal and Next Action, the files archived in step 1, and how many decision, reference and log files were loaded. Wait for the user before acting on the Next Action.
+
+# Always On
+To make memoir the default memory, the user pastes the block in `references/always-on.md` into their `CLAUDE.md` or `AGENTS.md`.

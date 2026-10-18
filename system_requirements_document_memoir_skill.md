@@ -43,7 +43,7 @@ A system prompt (`skill.md`) injected into the active AI CLI. It instructs the L
 
 ### 3.3 LLM Operations & Commands
 * **FR-3.1:** The LLM MUST enforce strict kebab-case naming for all generated files (e.g., `decision-auth-flow.md`).
-* **FR-3.2 (`/memoir decision [text]`):** MUST extract explicit architectural choices and write to `active/decision-{slug}.md`.
+* **FR-3.2 (`/memoir decision [text]`):** MUST extract explicit architectural choices and write to `active/decision-{slug}.md`, recording the decision, why, rejected alternatives, deferred work, and any superseded decision.
 * **FR-3.3 (`/memoir log [text]`):** MUST extract event/milestone logs and write to `active/log-{slug}.md`.
 * **FR-3.4 (`/memoir reference [text]`):** MUST record external context/paths to `active/reference-{slug}.md`.
 * **FR-3.5 (`/memoir state`):** MUST overwrite `active/state-current.md` using a strict, anti-bloat schema limited to 3 bullets per section:
@@ -53,6 +53,7 @@ A system prompt (`skill.md`) injected into the active AI CLI. It instructs the L
   * **Next Action:** [The exact next step]
 * **FR-3.6 (`/memoir coach`):** MUST evaluate current context drift, identify superseded decisions, and update the state file. On CLEAR, it MUST list the superseded files (for information only) and output two lines the user can paste into the CLI one at a time: `/clear`, then `/memoir reload`. The LLM MUST NOT generate the resume prompt itself.
 * **FR-3.7 (`/memoir reload`):** MUST run `memoir.py archive --superseded`, then `memoir.py resume`. It MUST take the active path from the resume output and read every file listed, starting with `state-current.md`. It MUST then reply with the restored Goal and Next Action and wait for the user before acting. If no session is recorded, it MUST say so and start fresh.
+* **FR-3.8 (Automatic decisions):** When the user chooses among alternatives or says "decision:" or "let's go with X", the LLM MUST write a decision fragment per FR-3.2 without waiting for `/memoir decision`.
 
 ## 4. Non-Functional Requirements
 
