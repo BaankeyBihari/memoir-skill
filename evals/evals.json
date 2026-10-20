@@ -1,0 +1,40 @@
+{
+  "skill_name": "memoir",
+  "evals": [
+    {
+      "id": 1,
+      "name": "auto-decision-supersedes",
+      "prompt": "[Earlier in this session]\nUser: The job-queue service keeps throwing `sqlite3.OperationalError: database is locked` now that we run 8 workers.\nAssistant: SQLite allows one writer at a time, so 8 workers updating job status will contend. Options: (a) Postgres with `SELECT ... FOR UPDATE SKIP LOCKED`, (b) Redis Streams, (c) keep SQLite and enable WAL mode.\n\n[Latest message]\nUser: WAL still serializes writers, so it won't cut it with 8 workers, and Redis is one more thing to operate. Let's go with Postgres + SKIP LOCKED. Read replicas can wait until we pass ~1k jobs/min.",
+      "expected_output": "Writes a decision fragment without being asked, recording Postgres + SKIP LOCKED, rejected WAL and Redis, deferred read replicas, and Supersedes: decision-use-sqlite.md.",
+      "files": ["evals/fixtures/auto-decision-supersedes"]
+    },
+    {
+      "id": 2,
+      "name": "state-snapshot",
+      "prompt": "[Earlier in this session]\nUser: Add rate limiting to the public API.\nAssistant: Implemented a token-bucket limiter in `src/ratelimit.py` (100 req/min per API key) and added `tests/test_ratelimit.py`; all 12 tests pass.\nUser: Multi-instance deploys need a shared bucket. Can we back it with Redis?\nAssistant: Yes, but staging has no Redis credentials yet, so I can't test it there. The in-memory limiter is not wired into `app.py` yet either.\nUser: OK, I'll ping ops for the creds. Wire the middleware into app.py next.\n\n[Latest message]\nUser: /memoir state",
+      "expected_output": "Overwrites the stale CI state-current.md with the rate-limiting state: 4 sections, at most 3 bullets each, Redis creds as blocked, wiring app.py as next action.",
+      "files": ["evals/fixtures/state-snapshot"]
+    },
+    {
+      "id": 3,
+      "name": "coach-clear-on-drift",
+      "prompt": "[Earlier in this session]\nUser: Build REST endpoints for invoices: GET /invoices, POST /invoices.\nAssistant: Done, in `src/api/invoices.py`.\nUser: Actually, switch invoices to GraphQL; the mobile team wants one query for invoice + line items.\nAssistant: Added `src/graphql/invoice.py` with an `invoice(id)` query.\nUser: No, I told you, REST is gone. Delete `src/api/invoices.py`, don't keep it as a fallback.\nAssistant: Deleted.\nUser: And the README still documents the REST endpoints. I already said REST is gone.\nAssistant: Removed the REST section from the README.\nUser: Ok forget invoices for now. The real fire is CI: we need to move from Travis to GitHub Actions today.\n\n[Latest message]\nUser: /memoir coach",
+      "expected_output": "Updates state to the CI goal, recommends CLEAR with the exact coach block, lists decision-use-rest-api.md as superseded, prints /clear and /memoir reload as bare lines, and does not write a resume prompt.",
+      "files": ["evals/fixtures/coach-clear-on-drift"]
+    },
+    {
+      "id": 4,
+      "name": "reload-restores-session",
+      "prompt": "[New session, no earlier conversation]\nUser: /memoir reload",
+      "expected_output": "Archives decision-use-session-cookies.md, reads state first, reports the PKCE goal and the token-refresh next action, counts 2 decisions / 1 reference / 1 log, and waits instead of implementing refresh.ts.",
+      "files": ["evals/fixtures/reload-restores-session"]
+    },
+    {
+      "id": 5,
+      "name": "trivial-choice-no-decision",
+      "prompt": "[Earlier in this session]\nUser: Write a helper that fetches a user row by id from our `users` table (sqlite3, db path is `app.db`).\nAssistant: Should the parameter be `uid` or `user_id`?\n\n[Latest message]\nUser: let's go with user_id, it matches the db column. Put it in users.py in the project dir.",
+      "expected_output": "Writes users.py with a user_id parameter. Proposed behavior (not yet in the SRD): a parameter-naming choice is too trivial for a decision fragment, so none is written.",
+      "files": ["evals/fixtures/trivial-choice-no-decision"]
+    }
+  ]
+}
