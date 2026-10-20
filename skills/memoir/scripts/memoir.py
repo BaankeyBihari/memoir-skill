@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
-ARCHIVABLE_RE = re.compile(r"^(decision|log|reference)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
+ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
 SUPERSEDED_RE = re.compile(r"decision-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
 
 def get_git_root():
@@ -65,21 +65,48 @@ def init_store(base_dir: Path):
     print(f"[Memoir] Initialized store at: {base_dir.absolute()}")
     return active_dir, archive_dir
 
+def ensure_gitignore_hint(base_dir: Path) -> None:
+    """Keep the default Git-root store out of commits by adding it to the repository .gitignore."""
+    git_root = get_git_root()
+    if git_root is None or base_dir != git_root / ".agents" / "memoir":
+        return
+
+    hint = ".agents/memoir/"
+    gitignore = git_root / ".gitignore"
+    existing = gitignore.read_text() if gitignore.exists() else ""
+    if hint in existing or ".agents/" in existing:
+        return
+    with gitignore.open("a") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write(hint + "\n")
+
 def generate_prompt(base_dir: Path):
     active_dir = base_dir / "active"
     print(f"SYSTEM CONTEXT INJECTION:")
     print(f"Your Memoir store is active. You must write all files strictly to this absolute path:")
     print(f"{active_dir.absolute()}")
 
-def find_superseded(base_dir: Path) -> list[str]:
-    """Decision files named on a `Supersedes:` line of another active decision."""
+def find_superseded(base_dir: Path) -> dict[str, str]:
+    """Decision files named on a `Supersedes:` line of another active decision, mapped to that decision."""
     active_dir = base_dir / "active"
-    names = set()
-    for path in active_dir.glob("decision-*.md"):
+    names = {}
+    for path in sorted(active_dir.glob("decision-*.md")):
         for line in path.read_text().splitlines():
             if line.startswith("Supersedes:"):
-                names.update(set(SUPERSEDED_RE.findall(line)) - {path.name})
-    return sorted(n for n in names if (active_dir / n).is_file())
+                for name in set(SUPERSEDED_RE.findall(line)) - {path.name}:
+                    names[name] = path.name
+    return {n: by for n, by in sorted(names.items()) if (active_dir / n).is_file()}
+
+def add_superseded_by(path: Path, by: str) -> None:
+    """Write a `Superseded-By:` back-link right after the `Supersedes:` line, once."""
+    lines = path.read_text().splitlines()
+    link = f"Superseded-By: {by}"
+    if link in lines:
+        return
+    i = next((k + 1 for k, line in enumerate(lines) if line.startswith("Supersedes:")), len(lines))
+    lines.insert(i, link)
+    path.write_text("\n".join(lines) + "\n")
 
 def archive_files(base_dir: Path, target_files: list[str]):
     active_dir = base_dir / "active"
@@ -153,6 +180,8 @@ def main():
 
     args = parser.parse_args()
     base_dir = resolve_store()
+    if args.command != "path":
+        ensure_gitignore_hint(base_dir)
 
     if args.command == "path":
         print(base_dir.absolute())
@@ -161,7 +190,11 @@ def main():
     elif args.command == "archive":
         if not args.files and not args.superseded:
             parser.error("archive needs filenames or --superseded")
-        archive_files(base_dir, args.files + (find_superseded(base_dir) if args.superseded else []))
+        superseded = find_superseded(base_dir) if args.superseded else {}
+        # Back-link the active copy before the move: a crash leaves a duplicate, never a lost fragment.
+        for name, by in superseded.items():
+            add_superseded_by(base_dir / "active" / name, by)
+        archive_files(base_dir, args.files + list(superseded))
     elif args.command == "prompt":
         generate_prompt(base_dir)
     elif args.command == "resume":
