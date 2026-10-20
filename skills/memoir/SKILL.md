@@ -67,27 +67,51 @@ Execute each command with your native file-writing tools, targeting the absolute
 * `/memoir state`: overwrite `state-current.md` using the state format above.
 * `/memoir capture`: save everything from the conversation that isn't recorded yet, so nothing is lost when the chat is cleared.
   1. Run `python3 <this-skill-dir>/scripts/memoir.py resume` and read the fragments it lists, so you know what is already recorded.
-  2. Write a `decision-`, `log-` or `reference-` fragment for each item in the conversation that no active fragment covers yet. Skip anything already recorded, even if worded differently: a duplicate decision splits one choice across two files and confuses `Supersedes:`.
+  2. Write a `decision-`, `log-` or `reference-` fragment for each item in the conversation that no active fragment covers yet. Skip anything already recorded, even if worded differently: a duplicate decision splits one choice across two files and confuses `Supersedes:`. When the user corrected the same thing more than once, record the correction as a decision and name the rejected approach in `Alternatives:` (e.g. "toasts, rejected by user 3x"); otherwise the next session repeats the mistake.
   3. Overwrite `state-current.md`.
   4. Reply with `Captured: <n> decisions, <n> logs, <n> references, state updated`, then the full path of each file written.
-* `/memoir coach`: run `/memoir capture` first, then evaluate the session for context drift and superseded decisions, and recommend exactly one action. Every coach reply includes the `Captured:` line:
-  - **CONTINUE**: still on one goal and the recent turns are on-topic.
-  - **COMPACT**: same goal, but the history is long or noisy. Tell the user to run the host's native compaction (`/compact` in Claude Code or Codex).
-  - **CLEAR**: the goal has changed, decisions have been reversed, or the user keeps re-correcting earlier context.
+* `/memoir coach`: run `/memoir capture` first, then pick exactly one outcome, checking in this order:
+  1. **CLEAR**: the goal changed, a decision was reversed, the user re-corrected or repeated an instruction two or more times, steering is hard ("I already said..."), or the history is noisy with dead ends. Capture has just recorded the decisions, so a fresh session loaded from memoir files is cleaner than a compacted noisy one. When torn between CLEAR and COMPACT, pick CLEAR.
+  2. **COMPACT**: same goal, no friction, but the history holds working context that is costly to rebuild and doesn't fit a fragment, such as large files already read or a mapped codebase. Debug findings don't count: capture saves them as a log.
+  3. **CONTINUE**: one goal, on-topic, and short enough to keep going.
 
-  For CLEAR, list every decision file named in another file's `Supersedes:` field, then reply exactly:
+  Reply with only the template for the outcome; don't print capture's own reply as well, or `Captured:` appears twice. Each `Why:` bullet (1 to 3) names its evidence, e.g. "re-corrected error display 3x (toasts -> inline)" or "goal switched from invoices to CI", never a bare label like "session is noisy".
 
-      [Memoir Coach] CLEAR — <one-line reason>
+  CONTINUE:
+
+      [Memoir Coach] CONTINUE
+      Why:
+      - <evidence>
       Captured: <n> decisions, <n> logs, <n> references, state updated
+      Next: <Next Action from state-current.md>
+
+  COMPACT:
+
+      [Memoir Coach] COMPACT
+      Why:
+      - <evidence>
+      Captured: <n> decisions, <n> logs, <n> references, state updated
+      Paste into your agent CLI:
+
+      /compact Keep: <goal>; <next action>; <context worth keeping>. Decisions and state are in <absolute active path>.
+
+  Keep the `/compact` line on one line so it pastes cleanly. If the host's `/compact` takes no argument, the user pastes `/compact` alone. No `/memoir reload`: compaction keeps the session.
+
+  CLEAR:
+
+      [Memoir Coach] CLEAR
+      Why:
+      - <evidence>
+      Captured: <n> decisions, <n> logs, <n> references, state updated
+      Files: <each fragment capture wrote | none new>
       State saved -> <absolute path>/state-current.md
-      Superseded: <file1.md file2.md | none>
-      Superseded files are archived on reload.
+      Superseded: <decision files named in another file's Supersedes: | none> (archived on reload)
       Paste each line into your agent CLI, one at a time:
 
       /clear
       /memoir reload
 
-  Print the two lines exactly as shown, with no numbers, bullets or comments, so they paste cleanly. Leave the resume prompt to `reload`: the CLI builds it from the files actually on disk, and a hand-written one drifts from them (FR-3.6).
+  `Files:` lets the user check what was saved before `/clear`, which can't be undone. Print the paste lines exactly as shown, with no numbers, bullets or comments, so they paste cleanly. Leave the resume prompt to `reload`: the CLI builds it from the files actually on disk, and a hand-written one drifts from them (FR-3.6).
 * `/memoir reload`: restore the last recorded session.
   1. Run `python3 <this-skill-dir>/scripts/memoir.py archive --superseded`. This moves every decision named on another decision's `Supersedes:` line into `archive/`.
   2. Run `python3 <this-skill-dir>/scripts/memoir.py resume`. Use the active path it prints for every later write.
