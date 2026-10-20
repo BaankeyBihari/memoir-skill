@@ -1,7 +1,7 @@
 """Set up and grade memoir skill eval runs.
 
-    python3 evals/harness.py setup <iteration-dir>   # seed run dirs from evals/fixtures
-    python3 evals/harness.py grade <iteration-dir>   # write grading.json + outputs/files-after-run.md
+    python3 evals/harness.py setup <iteration-dir> [eval-id ...]   # seed run dirs from evals/fixtures
+    python3 evals/harness.py grade <iteration-dir> [eval-id ...]   # write grading.json + outputs/files-after-run.md
 
 Layout per run: <iteration>/eval-<id>-<name>/<config>/run-1/{store,project,outputs}.
 """
@@ -131,11 +131,49 @@ def checks_trivial(run, fx):
     ]
 
 
-CHECKS = {1: checks_auto_decision, 2: checks_state, 3: checks_coach, 4: checks_reload, 5: checks_trivial}
+def checks_reload_no_uv(run, fx):
+    t = text(run / "outputs" / "transcript.md")
+    return checks_reload(run, fx) + [
+        ("No `uv run` attempted (self-reported transcript)", ("uv run" not in t, "")),
+        # Only uv errors count: the host's rtk hook also fails on the stripped PATH.
+        ("No uv 'command not found' errors", (not re.search(r"not found: uv\b|\buv: (?:command not found|not found|No such file)", t), "")),
+    ]
+
+
+def checks_slug_collision(run, fx):
+    active = run / "store" / "active"
+    old = "decision-use-redis-cache.md"
+    new = sorted(p for p in active.glob("decision-*.md") if p.name != old)
+    d = text(new[0]) if new else ""
+    return [
+        ("Session-cache decision left unchanged", (text(active / old) == text(fx / "active" / old), "")),
+        ("Exactly one new kebab-case decision file", (len(new) == 1 and bool(re.fullmatch(rf"decision-{KEBAB}\.md", new[0].name)), str([p.name for p in new]))),
+        ("New decision is about the catalog with a 5-minute TTL", ("catalog" in d.lower() and "5" in field(d, "Decision"), field(d, "Decision"))),
+        ("Supersedes: none (session cache still stands)", (field(d, "Supersedes") == "none", field(d, "Supersedes"))),
+        ("Alternatives names the per-instance LRU", ("lru" in field(d, "Alternatives").lower(), field(d, "Alternatives"))),
+    ]
+
+
+def checks_coach_continue(run, fx):
+    active = run / "store" / "active"
+    r = text(run / "outputs" / "response.md")
+    s = text(active / "state-current.md")
+    return [
+        ("Recommends CONTINUE", ("CONTINUE" in r, r[:200])),
+        ("Does not recommend CLEAR or COMPACT", ("CLEAR" not in r and "COMPACT" not in r and "/compact" not in r, "")),
+        ("No /clear paste line", ("/clear" not in r, "")),
+        ("State updated with the Export button as next action", ("button" in " ".join(sections(s).get("Next Action", [])).lower(), str(sections(s).get("Next Action")))),
+        ("Nothing archived", (not any((run / "store" / "archive").iterdir()), "")),
+    ]
+
+
+CHECKS = {1: checks_auto_decision, 2: checks_state, 3: checks_coach, 4: checks_reload, 5: checks_trivial,
+          6: checks_reload_no_uv, 7: checks_slug_collision, 8: checks_coach_continue}
+ONLY = {int(i) for i in sys.argv[3:]}
 
 
 def run_dirs(iteration: Path):
-    for e in EVALS:
+    for e in (e for e in EVALS if not ONLY or e["id"] in ONLY):
         eval_dir = iteration / f"eval-{e['id']}-{e['name']}"
         for config in CONFIGS:
             yield e, eval_dir, eval_dir / config / "run-1"
@@ -167,7 +205,9 @@ def dump_files(run: Path) -> str:
 
 def grade(iteration: Path):
     for e, _, run in run_dirs(iteration):
-        results = CHECKS[e["id"]](run, ROOT / e["files"][0])
+        if not run.is_dir():
+            continue
+        results =CHECKS[e["id"]](run, ROOT / e["files"][0])
         exps = [{"text": t, "passed": bool(ok), "evidence": ev} for t, (ok, ev) in results]
         passed = sum(x["passed"] for x in exps)
         timing = json.loads(text(run / "timing.json") or "{}")
