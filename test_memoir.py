@@ -50,5 +50,6 @@ with tempfile.TemporaryDirectory() as tmp:
 always_on = (SCRIPT.parents[1] / "references" / "always-on.md").read_text()
 block = always_on[always_on.index("```markdown"):always_on.rindex("```") + 3]
 assert block in (Path(__file__).parent / "README.md").read_text(), "README always-on block drifted"
+assert "uv run" not in (SCRIPT.parents[1] / "SKILL.md").read_text(), "SKILL.md must invoke the CLI with python3"
 
 print("ok")
