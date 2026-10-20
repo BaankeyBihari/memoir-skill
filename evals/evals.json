@@ -63,6 +63,20 @@
       "prompt": "[Earlier in this session]\nUser: Set up the monorepo. Use pnpm workspaces, npm hoisting keeps hiding missing deps.\nAssistant: Done: `pnpm-workspace.yaml` with `packages/*`. Recorded the pnpm decision.\nUser: Now tests. Jest or Vitest?\nAssistant: Vitest reuses our Vite config and runs ESM natively; Jest needs babel-jest plus ESM flags.\nUser: Vitest. Jest's ESM support is still experimental and I don't want the babel layer.\nAssistant: Added Vitest to `packages/core`. Running it on CI's Node 18 image crashes: `ERR_REQUIRE_ESM` from vite's config loader. It works on Node 20.\nUser: Ugh. CI is blocked until we bump the image to Node 20; I'll ask platform. Our upgrade runbook is at /srv/docs/platform/node-upgrade.md, keep that handy.\nAssistant: Noted.\n\n[Latest message]\nUser: /memoir capture",
       "expected_output": "Writes one decision (Vitest over Jest), one log (Node 18 ERR_REQUIRE_ESM blocks CI), one reference (/srv/docs/platform/node-upgrade.md), no second pnpm decision, overwrites state, and replies with 'Captured: 1 decisions, 1 logs, 1 references, state updated' plus the paths.",
       "files": ["evals/fixtures/capture-sweep"]
+    },
+    {
+      "id": 10,
+      "name": "coach-compact-loaded-context",
+      "prompt": "[Earlier in this session, about 60 turns]\nUser: Refactor billing/ so tax calculation lives in one module. Read everything first.\nAssistant: Read all 14 files in billing/ (about 4,200 lines). Map: invoice.py, credit_note.py and subscription.py each compute VAT inline; invoice.py:212 and credit_note.py:88 round per line, subscription.py:140 rounds per total. Call graph: api/routes.py -> invoice.create -> invoice._vat; webhooks.py -> subscription.renew -> subscription._tax; credit_note.issue -> credit_note._vat. Fixtures for all three live in tests/billing/conftest.py. No tests fail today.\nUser: Great map, thanks. Plan looks right.\nAssistant: Next I create billing/tax.py with a single compute_tax(lines, region, rounding) and switch invoice.py first.\nUser: Go ahead after this.\n\n[Latest message]\nUser: /memoir coach",
+      "expected_output": "Recommends COMPACT: same goal, no friction, and a costly 14-file map in context. Why cites the loaded map, one Captured: line, a single-line /compact focus prompt naming the billing refactor and the absolute active path, no /clear and no /memoir reload.",
+      "files": ["evals/fixtures/coach-compact-loaded-context"]
+    },
+    {
+      "id": 11,
+      "name": "coach-clear-on-friction",
+      "prompt": "[Earlier in this session]\nUser: Add validation to the signup form: email format and password at least 12 chars.\nAssistant: Added validators; errors show as toast notifications.\nUser: No, show errors inline under each field, not toasts.\nAssistant: Updated: errors now show in a toast plus a red border on the field.\nUser: Again, no toasts. Inline text under the field only.\nAssistant: Removed the border; the toast now appears next to the field.\nUser: I already told you twice: no toasts at all. Plain inline error text below each input.\nAssistant: Done: plain inline text below each input, toasts removed.\n\n[Latest message]\nUser: /memoir coach",
+      "expected_output": "Recommends CLEAR despite the unchanged goal because of 3 corrections. Captures 'inline errors, not toasts' as a decision naming toasts as rejected, lists it on the Files: line, cites the repeated correction in Why, and prints /clear then /memoir reload.",
+      "files": ["evals/fixtures/coach-clear-on-friction"]
     }
   ]
 }
