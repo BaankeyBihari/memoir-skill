@@ -1,6 +1,6 @@
 ---
 name: memoir
-description: Persist decisions, logs, references, feedbacks and working state to project-local files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|feedback|state|capture|coach|reload, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session.
+description: Persist decisions, logs, references, feedbacks and working state to project-local files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|feedback|state|capture|coach|reload, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
 ---
 
 # Role
