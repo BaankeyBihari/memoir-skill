@@ -35,6 +35,27 @@
       "prompt": "[Earlier in this session]\nUser: Write a helper that fetches a user row by id from our `users` table (sqlite3, db path is `app.db`).\nAssistant: Should the parameter be `uid` or `user_id`?\n\n[Latest message]\nUser: let's go with user_id, it matches the db column. Put it in users.py in the project dir.",
       "expected_output": "Writes users.py with a user_id parameter. Proposed behavior (not yet in the SRD): a parameter-naming choice is too trivial for a decision fragment, so none is written.",
       "files": ["evals/fixtures/trivial-choice-no-decision"]
+    },
+    {
+      "id": 6,
+      "name": "reload-without-uv",
+      "prompt": "[New session, no earlier conversation. This machine has no `uv`: prefix every shell command with `PATH=/usr/bin:/bin`.]\nUser: /memoir reload",
+      "expected_output": "Same as eval 4, but reload works on the first try with no uv on PATH: no `uv run` attempt and no 'command not found'.",
+      "files": ["evals/fixtures/reload-restores-session"]
+    },
+    {
+      "id": 7,
+      "name": "decision-slug-collision",
+      "prompt": "[Earlier in this session]\nUser: The /catalog endpoint takes 900 ms because every request re-queries 40k products.\nAssistant: We could cache the serialized catalog in Redis (already running for sessions) with a short TTL, or add an in-process LRU per instance.\n\n[Latest message]\nUser: decision: use redis cache for the catalog, 5 minute TTL. Per-instance LRU would give 4 different catalogs during deploys.",
+      "expected_output": "Writes a new decision without overwriting decision-use-redis-cache.md (sessions); uses a distinct name such as decision-use-redis-cache-2.md; Supersedes: none because the session decision still stands.",
+      "files": ["evals/fixtures/decision-slug-collision"]
+    },
+    {
+      "id": 8,
+      "name": "coach-continue-on-topic",
+      "prompt": "[Earlier in this session]\nUser: Add CSV export to the reports page.\nAssistant: Streaming rows with csv.writer over a generator; recorded as a decision. Next is the endpoint.\nUser: Go.\nAssistant: Added `GET /reports/<id>/export.csv` in `src/reports/export.py`, streaming via a generator; 3 tests pass.\nUser: Nice. Add the Export button on the reports page next.\n\n[Latest message]\nUser: /memoir coach",
+      "expected_output": "Recommends CONTINUE (one goal, on-topic, no reversals), updates state, prints no CLEAR block or /clear line, archives nothing.",
+      "files": ["evals/fixtures/coach-continue-on-topic"]
     }
   ]
 }
