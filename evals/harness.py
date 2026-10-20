@@ -263,9 +263,30 @@ def checks_coach_friction(run, fx):
     ]
 
 
+def checks_capture_feedback(run, fx):
+    active = run / "store" / "active"
+    r = text(run / "outputs" / "response.md")
+    old = "feedback-imperative-commits.md"
+    feedback = sorted(p for p in active.glob("feedback-*.md") if p.name != old)
+    decisions = sorted(active.glob("decision-*.md"))
+    f = text(feedback[0]) if feedback else ""
+    d = text(decisions[0]) if decisions else ""
+    s = text(active / "state-current.md")
+    recap = re.compile(r"recap|summar", re.I)
+    return [
+        ("Exactly one new kebab-case feedback, about recaps", (len(feedback) == 1 and bool(re.fullmatch(rf"feedback-{KEBAB}\.md", feedback[0].name)) and bool(recap.search(field(f, "Feedback"))), str([p.name for p in feedback]))),
+        ("Feedback Why: names the rejected recaps", (bool(recap.search(field(f, "Why"))), field(f, "Why"))),
+        ("Imperative-commit feedback unchanged, not duplicated", (text(active / old) == text(fx / "active" / old) and not any("imperative" in text(p).lower() for p in feedback), "")),
+        ("Exactly one decision, about zod, not about recaps", (len(decisions) == 1 and "zod" in field(d, "Decision").lower() and not recap.search(d), str([p.name for p in decisions]))),
+        ("One-off rename not recorded as feedback or decision", (not any("format.ts" in text(p) for p in [*feedback, *decisions]), "")),
+        ("State written today", (field(s, "Updated") == str(TODAY), field(s, "Updated"))),
+        ("Reply has 'Captured: 1 decisions, <n> logs, 0 references, 1 feedback, state updated'", (bool(re.search(r"Captured: 1 decisions?, \d+ logs?, 0 references?, 1 feedback, state updated", r)), next((l for l in r.splitlines() if "Captured" in l), "(missing)"))),
+    ]
+
+
 CHECKS = {1: checks_auto_decision, 2: checks_state, 3: checks_coach, 4: checks_reload, 5: checks_trivial,
           6: checks_reload_no_uv, 7: checks_slug_collision, 8: checks_coach_continue, 9: checks_capture,
-          10: checks_coach_compact, 11: checks_coach_friction}
+          10: checks_coach_compact, 11: checks_coach_friction, 12: checks_capture_feedback}
 ONLY = {int(i) for i in sys.argv[3:]}
 
 
