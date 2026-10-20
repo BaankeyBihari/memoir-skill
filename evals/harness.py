@@ -90,6 +90,7 @@ def checks_coach(run, fx):
     goal = " ".join(sections(s).get("Goal", [])).lower()
     return [
         ("Recommends CLEAR with the coach header", (bool(re.search(r"^\[Memoir Coach\] CLEAR\s*[—-]+\s*\S", r, re.M)), next((l for l in lines if "Memoir Coach" in l), "(no header)"))),
+        ("Captured: line directly after the header", (bool(re.search(r"^\[Memoir Coach\] CLEAR.*\n\s*Captured: \d+ decisions?, \d+ logs?, \d+ references?, state updated", r, re.M)), next((l for l in lines if l.startswith("Captured:")), "(missing)"))),
         ("State saved line has the absolute active path", (f"State saved -> {active}/state-current.md" in r, next((l for l in lines if l.startswith("State saved")), "(missing)"))),
         ("Superseded line lists exactly decision-use-rest-api.md", (bool(re.search(r"^Superseded: decision-use-rest-api\.md\s*$", r, re.M)), next((l for l in lines if l.startswith("Superseded:")), "(missing)"))),
         ("/clear then /memoir reload as bare consecutive lines", (i >= 0 and i + 1 < len(lines) and lines[i + 1] == "/memoir reload", str(lines[i:i + 2]) if i >= 0 else "no bare /clear line")),
@@ -167,8 +168,27 @@ def checks_coach_continue(run, fx):
     ]
 
 
+def checks_capture(run, fx):
+    active = run / "store" / "active"
+    r = text(run / "outputs" / "response.md")
+    decisions = sorted(p for p in active.glob("decision-*.md") if p.name != "decision-use-pnpm.md")
+    logs, refs = sorted(active.glob("log-*.md")), sorted(active.glob("reference-*.md"))
+    d = text(decisions[0]) if decisions else ""
+    s = text(active / "state-current.md")
+    blocked = " ".join(sections(s).get("Blocked/Pending", [])).lower()
+    return [
+        ("Exactly one new decision, about Vitest", (len(decisions) == 1 and "vitest" in field(d, "Decision").lower(), str([p.name for p in decisions]))),
+        ("No duplicate pnpm decision", (not any("pnpm" in text(p).lower().split("alternatives:")[0] for p in decisions), "")),
+        ("pnpm decision unchanged", (text(active / "decision-use-pnpm.md") == text(fx / "active" / "decision-use-pnpm.md"), "")),
+        ("Exactly one log, about the Node 18 ESM crash", (len(logs) == 1 and "node 18" in text(logs[0]).lower(), str([p.name for p in logs]))),
+        ("Exactly one reference, targeting the runbook path", (len(refs) == 1 and field(text(refs[0]), "Target") == "/srv/docs/platform/node-upgrade.md", str([p.name for p in refs]))),
+        ("State written today with Node 20 bump as blocked", (field(s, "Updated") == str(TODAY) and "node 20" in blocked, f"Updated {field(s, 'Updated')}; blocked {blocked!r}")),
+        ("Reply has 'Captured: 1 decisions, 1 logs, 1 references, state updated'", (bool(re.search(r"Captured: 1 decisions?, 1 logs?, 1 references?, state updated", r)), next((l for l in r.splitlines() if "Captured" in l), "(missing)"))),
+    ]
+
+
 CHECKS = {1: checks_auto_decision, 2: checks_state, 3: checks_coach, 4: checks_reload, 5: checks_trivial,
-          6: checks_reload_no_uv, 7: checks_slug_collision, 8: checks_coach_continue}
+          6: checks_reload_no_uv, 7: checks_slug_collision, 8: checks_coach_continue, 9: checks_capture}
 ONLY = {int(i) for i in sys.argv[3:]}
 
 
