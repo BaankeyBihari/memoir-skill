@@ -16,6 +16,7 @@ import shutil
 import hashlib
 import argparse
 import subprocess
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -32,6 +33,13 @@ def get_git_root():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
+def root_store(root: Path) -> Path:
+    """`.agents/memoir`, else an existing `.claude/memoir`; `.agents/memoir` wins when both exist."""
+    agents, claude = root / ".agents" / "memoir", root / ".claude" / "memoir"
+    if claude.is_dir() and agents.is_dir():
+        print(f"[Memoir] Warning: both {agents} and {claude} exist; using {agents}.", file=sys.stderr)
+    return claude if claude.is_dir() and not agents.is_dir() else agents
+
 def resolve_store():
     # 1. Explicit Override
     memoir_store = os.environ.get("MEMOIR_STORE")
@@ -41,7 +49,7 @@ def resolve_store():
     # 2. Git Workspace
     git_root = get_git_root()
     if git_root:
-        return git_root / ".agents" / "memoir"
+        return root_store(git_root)
 
     # 3. Non-Git Local / Global Fallback
     cwd = Path.cwd()
@@ -53,14 +61,22 @@ def resolve_store():
         return config_home / "memoir" / "memories" / project_slug
 
     # 4. Default to CWD
-    return cwd / ".agents" / "memoir"
+    return root_store(cwd)
+
+def check_access(base_dir: Path) -> None:
+    """Create the store and probe a write; exit 3 so the caller can ask the user for access."""
+    try:
+        (base_dir / "active").mkdir(parents=True, exist_ok=True)
+        (base_dir / "archive").mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=base_dir / "active"):
+            pass
+    except OSError as e:
+        print(f"[Memoir] No write access to {base_dir.absolute()} ({e.strerror or e})", file=sys.stderr)
+        sys.exit(3)
 
 def init_store(base_dir: Path):
     active_dir = base_dir / "active"
     archive_dir = base_dir / "archive"
-    
-    active_dir.mkdir(parents=True, exist_ok=True)
-    archive_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[Memoir] Initialized store at: {base_dir.absolute()}")
     return active_dir, archive_dir
@@ -68,18 +84,22 @@ def init_store(base_dir: Path):
 def ensure_gitignore_hint(base_dir: Path) -> None:
     """Keep the default Git-root store out of commits by adding it to the repository .gitignore."""
     git_root = get_git_root()
-    if git_root is None or base_dir != git_root / ".agents" / "memoir":
+    if git_root is None or base_dir not in (git_root / ".agents" / "memoir", git_root / ".claude" / "memoir"):
         return
 
-    hint = ".agents/memoir/"
-    gitignore = git_root / ".gitignore"
-    existing = gitignore.read_text() if gitignore.exists() else ""
-    if hint in existing or ".agents/" in existing:
+    hint = f"{base_dir.relative_to(git_root).as_posix()}/"
+    ignored = subprocess.run(["git", "check-ignore", "-q", hint], cwd=git_root).returncode == 0
+    if ignored:
         return
-    with gitignore.open("a") as f:
-        if existing and not existing.endswith("\n"):
-            f.write("\n")
-        f.write(hint + "\n")
+    gitignore = git_root / ".gitignore"
+    try:
+        existing = gitignore.read_text() if gitignore.exists() else ""
+        with gitignore.open("a") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write(hint + "\n")
+    except OSError as e:
+        print(f"[Memoir] Could not update {gitignore} ({e.strerror or e}). Add this line manually: {hint}", file=sys.stderr)
 
 def generate_prompt(base_dir: Path):
     active_dir = base_dir / "active"
@@ -181,6 +201,7 @@ def main():
     args = parser.parse_args()
     base_dir = resolve_store()
     if args.command != "path":
+        check_access(base_dir)
         ensure_gitignore_hint(base_dir)
 
     if args.command == "path":
