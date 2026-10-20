@@ -53,6 +53,39 @@ def refs_grounded(active: Path, prompt: str) -> tuple[bool, str]:
     return (not bad, f"ungrounded: {bad}")
 
 
+CAPTURED = r"^Captured: \d+ decisions?, \d+ logs?, \d+ references?, state updated\s*$"
+
+
+def coach_shape(r: str, outcome: str) -> list:
+    """Shared coach template: header, Why: with bullets, exactly one Captured: after Why:."""
+    lines = r.splitlines()
+    head = next((i for i, l in enumerate(lines) if l.strip() == f"[Memoir Coach] {outcome}"), -1)
+    why = next((i for i, l in enumerate(lines) if l.strip() == "Why:"), -1)
+    caps = [i for i, l in enumerate(lines) if re.match(CAPTURED, l.strip())]
+    bullets = why >= 0 and why + 1 < len(lines) and lines[why + 1].lstrip().startswith("- ")
+    return [
+        (f"Header line is exactly '[Memoir Coach] {outcome}'", (head >= 0, next((l for l in lines if "Memoir Coach" in l), "(no header)"))),
+        ("Why: line after the header, followed by a bullet", (head >= 0 and why > head and bullets, lines[why + 1] if 0 <= why < len(lines) - 1 else "(missing)")),
+        ("Exactly one Captured: line, after Why:", (len(caps) == 1 and caps[0] > why >= 0, f"{len(caps)} Captured: lines")),
+    ]
+
+
+def files_line_lists_new(r: str, active: Path, fx: Path) -> tuple:
+    new = sorted(p.name for p in active.glob("*.md")
+                 if p.name != "state-current.md" and not (fx / "active" / p.name).exists())
+    line = next((l for l in r.splitlines() if l.startswith("Files:")), "")
+    return ("Files: line names every new fragment", (bool(line) and all(n in line for n in new), f"{line!r} vs {new}"))
+
+
+def superseded_line_matches_disk(lines: list[str], active: Path) -> tuple:
+    """Superseded: names exactly the active decisions some other decision supersedes (always incl. the REST one)."""
+    want = {n for p in active.glob("decision-*.md")
+            for n in re.findall(rf"decision-{KEBAB}\.md", field(text(p), "Supersedes")) if n != p.name}
+    line = next((l for l in lines if l.startswith("Superseded:")), "")
+    got = set(re.findall(rf"decision-{KEBAB}\.md", line))
+    return ("Superseded line matches the Supersedes: chain on disk", (bool(line) and got == want and "decision-use-rest-api.md" in got, f"{line!r} vs {sorted(want)}"))
+
+
 def count_said(reply: str, n: int, kind: str) -> bool:
     return bool(re.search(rf"\b{n}\b[^\n\d]{{0,20}}{kind}|{kind}s?\W{{0,5}}{n}\b", reply, re.I))
 
@@ -97,10 +130,10 @@ def checks_coach(run, fx):
     s = text(active / "state-current.md")
     goal = " ".join(sections(s).get("Goal", [])).lower()
     return [
-        ("Recommends CLEAR with the coach header", (bool(re.search(r"^\[Memoir Coach\] CLEAR\s*[—-]+\s*\S", r, re.M)), next((l for l in lines if "Memoir Coach" in l), "(no header)"))),
-        ("Captured: line directly after the header", (bool(re.search(r"^\[Memoir Coach\] CLEAR.*\n\s*Captured: \d+ decisions?, \d+ logs?, \d+ references?, state updated", r, re.M)), next((l for l in lines if l.startswith("Captured:")), "(missing)"))),
+        *coach_shape(r, "CLEAR"),
+        files_line_lists_new(r, active, fx),
         ("State saved line has the absolute active path", (f"State saved -> {active}/state-current.md" in r, next((l for l in lines if l.startswith("State saved")), "(missing)"))),
-        ("Superseded line lists exactly decision-use-rest-api.md", (bool(re.search(r"^Superseded: decision-use-rest-api\.md\s*$", r, re.M)), next((l for l in lines if l.startswith("Superseded:")), "(missing)"))),
+        superseded_line_matches_disk(lines, active),
         ("/clear then /memoir reload as bare consecutive lines", (i >= 0 and i + 1 < len(lines) and lines[i + 1] == "/memoir reload", str(lines[i:i + 2]) if i >= 0 else "no bare /clear line")),
         ("No hand-written resume prompt", ("Load the following files" not in r and "Based on the state file" not in r, "")),
         ("State updated to the CI migration goal", (field(s, "Updated") == str(TODAY) and ("github actions" in goal or "travis" in goal), f"Updated {field(s, 'Updated')}; goal {goal!r}")),
@@ -169,9 +202,9 @@ def checks_coach_continue(run, fx):
     r = text(run / "outputs" / "response.md")
     s = text(active / "state-current.md")
     return [
-        ("Recommends CONTINUE", ("CONTINUE" in r, r[:200])),
-        ("Does not recommend CLEAR or COMPACT", ("CLEAR" not in r and "COMPACT" not in r and "/compact" not in r, "")),
-        ("No /clear paste line", ("/clear" not in r, "")),
+        *coach_shape(r, "CONTINUE"),
+        ("Next: line follows Captured:", (bool(re.search(r"^Captured:.*\n\s*Next: \S", r, re.M)), next((l for l in r.splitlines() if l.startswith("Next:")), "(missing)"))),
+        ("No /clear, /compact or /memoir reload", (not re.search(r"^\s*/(?:clear|compact|memoir reload)\b", r, re.M), "")),
         ("State updated with the Export button as next action", ("button" in " ".join(sections(s).get("Next Action", [])).lower(), str(sections(s).get("Next Action")))),
         ("Nothing archived", (not any((run / "store" / "archive").iterdir()), "")),
     ]
@@ -197,8 +230,41 @@ def checks_capture(run, fx):
     ]
 
 
+def checks_coach_compact(run, fx):
+    active = run / "store" / "active"
+    r = text(run / "outputs" / "response.md")
+    compact = [l.strip() for l in r.splitlines() if l.strip().startswith("/compact")]
+    focus = compact[0].lower() if compact else ""
+    return [
+        *coach_shape(r, "COMPACT"),
+        ("Exactly one /compact line", (len(compact) == 1, str(compact))),
+        ("/compact focus names the billing/tax refactor", ("billing" in focus or "tax" in focus, focus[:200])),
+        ("/compact focus names the absolute active path", (str(active) in (compact[0] if compact else ""), focus[:200])),
+        ("No /clear or /memoir reload", (not re.search(r"^\s*/(?:clear|memoir reload)\b", r, re.M), "")),
+    ]
+
+
+def checks_coach_friction(run, fx):
+    active = run / "store" / "active"
+    r = text(run / "outputs" / "response.md")
+    lines = [l.strip() for l in r.splitlines() if l.strip()]
+    i = lines.index("/clear") if "/clear" in lines else -1
+    decisions = sorted(active.glob("decision-*.md"))
+    inline = [p for p in decisions if "inline" in field(text(p), "Decision").lower()
+              and "toast" in field(text(p), "Alternatives").lower()]
+    why = r.split("Why:", 1)[1].split("Captured:", 1)[0].lower() if "Why:" in r and "Captured:" in r else ""
+    return [
+        *coach_shape(r, "CLEAR"),
+        ("Decision records inline errors with toasts as the rejected alternative", (bool(inline), str([p.name for p in decisions]))),
+        files_line_lists_new(r, active, fx),
+        ("Why: cites the repeated toast/inline correction", (("toast" in why or "inline" in why) and bool(re.search(r"\b(3|three|twice|repeat|re-?correct)", why)), why[:200])),
+        ("/clear then /memoir reload as bare consecutive lines", (i >= 0 and i + 1 < len(lines) and lines[i + 1] == "/memoir reload", str(lines[i:i + 2]) if i >= 0 else "no bare /clear line")),
+    ]
+
+
 CHECKS = {1: checks_auto_decision, 2: checks_state, 3: checks_coach, 4: checks_reload, 5: checks_trivial,
-          6: checks_reload_no_uv, 7: checks_slug_collision, 8: checks_coach_continue, 9: checks_capture}
+          6: checks_reload_no_uv, 7: checks_slug_collision, 8: checks_coach_continue, 9: checks_capture,
+          10: checks_coach_compact, 11: checks_coach_friction}
 ONLY = {int(i) for i in sys.argv[3:]}
 
 
