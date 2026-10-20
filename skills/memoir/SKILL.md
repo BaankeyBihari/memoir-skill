@@ -95,7 +95,7 @@ Execute each command with your native file-writing tools, targeting the absolute
 
       /compact Keep: <goal>; <next action>; <context worth keeping>. Decisions and state are in <absolute active path>.
 
-  Keep the `/compact` line on one line so it pastes cleanly. If the host's `/compact` takes no argument, the user pastes `/compact` alone. No `/memoir reload`: compaction keeps the session.
+  Keep the `/compact` line on one line so it pastes cleanly, and under 300 characters apart from the path. Name the context to keep ("the billing/ file map and call graph") rather than copying it in: the compaction summary preserves the detail, and a long focus prompt is hard to read and edit before pasting. If the host's `/compact` takes no argument, the user pastes `/compact` alone. No `/memoir reload`: compaction keeps the session.
 
   CLEAR:
 
