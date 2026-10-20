@@ -53,7 +53,7 @@ def refs_grounded(active: Path, prompt: str) -> tuple[bool, str]:
     return (not bad, f"ungrounded: {bad}")
 
 
-CAPTURED = r"^Captured: \d+ decisions?, \d+ logs?, \d+ references?, state updated\s*$"
+CAPTURED = r"^Captured: \d+ decisions?, \d+ logs?, \d+ references?, \d+ feedback, state updated\s*$"
 
 
 def coach_shape(r: str, outcome: str) -> list:
@@ -226,7 +226,7 @@ def checks_capture(run, fx):
         ("Exactly one reference, targeting the runbook path", (len(refs) == 1 and field(text(refs[0]), "Target") == "/srv/docs/platform/node-upgrade.md", str([p.name for p in refs]))),
         ("Every reference Target is a URL, existing path or user-stated path", refs_grounded(active, PROMPTS[9])),
         ("State written today with Node 20 bump as blocked", (field(s, "Updated") == str(TODAY) and "node 20" in blocked, f"Updated {field(s, 'Updated')}; blocked {blocked!r}")),
-        ("Reply has 'Captured: 1 decisions, 1 logs, 1 references, state updated'", (bool(re.search(r"Captured: 1 decisions?, 1 logs?, 1 references?, state updated", r)), next((l for l in r.splitlines() if "Captured" in l), "(missing)"))),
+        ("Reply has 'Captured: 1 decisions, 1 logs, 1 references, 0 feedback, state updated'", (bool(re.search(r"Captured: 1 decisions?, 1 logs?, 1 references?, 0 feedback, state updated", r)), next((l for l in r.splitlines() if "Captured" in l), "(missing)"))),
     ]
 
 
