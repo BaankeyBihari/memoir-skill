@@ -51,9 +51,10 @@ A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It i
   * **Completed:** [What was just done]
   * **Blocked/Pending:** [Current errors or open threads]
   * **Next Action:** [The exact next step]
-* **FR-3.6 (`/memoir coach`):** MUST evaluate current context drift, identify superseded decisions, and update the state file. On CLEAR, it MUST list the superseded files (for information only) and output two lines the user can paste into the CLI one at a time: `/clear`, then `/memoir reload`. The LLM MUST NOT generate the resume prompt itself.
+* **FR-3.6 (`/memoir coach`):** MUST first run capture (FR-3.9), then evaluate current context drift and identify superseded decisions. Every coach reply MUST include the `Captured:` summary line from FR-3.9. On CLEAR, it MUST list the superseded files (for information only) and output two lines the user can paste into the CLI one at a time: `/clear`, then `/memoir reload`. The LLM MUST NOT generate the resume prompt itself.
 * **FR-3.7 (`/memoir reload`):** MUST run `memoir.py archive --superseded`, then `memoir.py resume`. It MUST take the active path from the resume output and read every file listed, starting with `state-current.md`. It MUST then reply with the restored Goal and Next Action and wait for the user before acting. If no session is recorded, it MUST say so and start fresh.
 * **FR-3.8 (Automatic decisions):** When the user chooses among alternatives or says "decision:" or "let's go with X", the LLM MUST write a decision fragment per FR-3.2 without waiting for `/memoir decision`.
+* **FR-3.9 (`/memoir capture`):** MUST run `memoir.py resume` to get the active path and the existing fragments, then write every decision (FR-3.2), log (FR-3.3) and reference (FR-3.4) from the conversation that is not already recorded in an active fragment, and finally overwrite the state file (FR-3.5). It MUST NOT duplicate an item already recorded. It MUST reply with one summary line, `Captured: <n> decisions, <n> logs, <n> references, state updated`, followed by the absolute path of each file written.
 
 ## 4. Non-Functional Requirements
 
@@ -73,7 +74,7 @@ A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It i
 1. **Initialize:** User runs `memoir.py init` in their project.
 2. **Inject Context:** User starts their AI CLI, injecting the absolute path: `claude --append-system-prompt "$(memoir.py prompt)"` (or equivalent).
 3. **Develop:** User works normally, issuing `/memoir decision`, `/memoir log`, or `/memoir state` when milestones are reached.
-4. **Evaluate:** User issues `/memoir coach`. The LLM recommends a `CLEAR` due to high context density and lists old decisions.
+4. **Evaluate:** User issues `/memoir coach`. The LLM captures anything unrecorded from the conversation, then recommends a `CLEAR` due to high context density and lists old decisions.
 5. **Reload:** 
    * User pastes `/clear`, then `/memoir reload`, into the CLI.
    * Reload archives superseded decisions, loads the active files, and the user continues working with a pristine, focused context window.

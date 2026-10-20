@@ -24,7 +24,8 @@ Inside the agent CLI:
 | `/memoir log [text]` | Writes `log-{slug}.md` |
 | `/memoir reference [text]` | Writes `reference-{slug}.md` |
 | `/memoir state` | Overwrites `state-current.md` (Goal, Completed, Blocked/Pending, Next Action) |
-| `/memoir coach` | Recommends CONTINUE, COMPACT or CLEAR |
+| `/memoir capture` | Writes every unrecorded decision, log and reference from the conversation, then updates `state-current.md` |
+| `/memoir coach` | Captures, then recommends CONTINUE, COMPACT or CLEAR |
 | `/memoir reload` | Archives superseded decisions and loads the last recorded session |
 
 The clear loop:

@@ -1,6 +1,6 @@
 ---
 name: memoir
-description: Persist decisions, logs, references and working state to project-local files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|state|coach|reload, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, snapshot progress, decide whether to clear context, or restore the last session.
+description: Persist decisions, logs, references and working state to project-local files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|state|capture|coach|reload, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session.
 ---
 
 # Role
@@ -65,7 +65,12 @@ Execute each command with your native file-writing tools, targeting the absolute
 * `/memoir log [text]`: write `log-{slug}.md`.
 * `/memoir reference [text]`: write `reference-{slug}.md`.
 * `/memoir state`: overwrite `state-current.md` using the state format above.
-* `/memoir coach`: evaluate the session for context drift and superseded decisions, update `state-current.md`, then recommend exactly one action:
+* `/memoir capture`: save everything from the conversation that isn't recorded yet, so nothing is lost when the chat is cleared.
+  1. Run `python3 <this-skill-dir>/scripts/memoir.py resume` and read the fragments it lists, so you know what is already recorded.
+  2. Write a `decision-`, `log-` or `reference-` fragment for each item in the conversation that no active fragment covers yet. Skip anything already recorded, even if worded differently: a duplicate decision splits one choice across two files and confuses `Supersedes:`.
+  3. Overwrite `state-current.md`.
+  4. Reply with `Captured: <n> decisions, <n> logs, <n> references, state updated`, then the full path of each file written.
+* `/memoir coach`: run `/memoir capture` first, then evaluate the session for context drift and superseded decisions, and recommend exactly one action. Every coach reply includes the `Captured:` line:
   - **CONTINUE**: still on one goal and the recent turns are on-topic.
   - **COMPACT**: same goal, but the history is long or noisy. Tell the user to run the host's native compaction (`/compact` in Claude Code or Codex).
   - **CLEAR**: the goal has changed, decisions have been reversed, or the user keeps re-correcting earlier context.
@@ -73,6 +78,7 @@ Execute each command with your native file-writing tools, targeting the absolute
   For CLEAR, list every decision file named in another file's `Supersedes:` field, then reply exactly:
 
       [Memoir Coach] CLEAR — <one-line reason>
+      Captured: <n> decisions, <n> logs, <n> references, state updated
       State saved -> <absolute path>/state-current.md
       Superseded: <file1.md file2.md | none>
       Superseded files are archived on reload.
