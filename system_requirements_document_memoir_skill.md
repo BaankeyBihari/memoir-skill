@@ -22,7 +22,7 @@ The Memoir system relies on a dual-component architecture to ensure determinism 
 A zero-dependency (or `uv`-bootstrapped via PEP 723) Python script (`memoir.py`) responsible for path resolution, directory initialization, file archiving, and dynamic resume-prompt generation. It executes natively on the host machine.
 
 ### 2.2 The Agentic Engine (LLM Prompt)
-A system prompt (`skill.md`) injected into the active AI CLI. It instructs the LLM on how to extract conversational intent and write strictly formatted Markdown files directly to the absolute path provided by the Python CLI.
+A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It instructs the LLM on how to extract conversational intent and write strictly formatted Markdown files directly to the absolute path provided by the Python CLI.
 
 ## 3. Functional Requirements
 
@@ -58,7 +58,7 @@ A system prompt (`skill.md`) injected into the active AI CLI. It instructs the L
 ## 4. Non-Functional Requirements
 
 ### 4.1 Interoperability
-* **NFR-1.1:** The Python CLI MUST run on Python 3.11+ using only standard library modules, or fully encapsulate dependencies using PEP 723 inline metadata for seamless execution via `uv`.
+* **NFR-1.1:** The Python CLI MUST run on Python 3.11+ using only standard library modules, or fully encapsulate dependencies using PEP 723 inline metadata for seamless execution via `uv`. The skill prompt MUST invoke the CLI as `python3 <skill-dir>/scripts/memoir.py`, so `uv` stays optional.
 * **NFR-1.2:** The system MUST NOT depend on Model Context Protocol (MCP) servers, background daemons, or specific IDE plugins.
 
 ### 4.2 Security & Compliance
