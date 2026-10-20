@@ -1,0 +1,22 @@
+[
+  {"query": "ok we've been going back and forth on this auth refactor for like 2 hours and you keep reintroducing the session cookie thing I said to drop. can you save what we actually decided so I can nuke this chat and start over clean", "should_trigger": true},
+  {"query": "decision: we're going with postgres SKIP LOCKED for the job queue instead of redis streams, redis is one more thing to run. record that", "should_trigger": true},
+  {"query": "/memoir reload", "should_trigger": true},
+  {"query": "before I close my laptop, snapshot where we are on the stripe webhook migration so tomorrow's session can pick up from the next step", "should_trigger": true},
+  {"query": "this chat is getting long and kinda messy, should I compact or just clear it? we're still on the same billing refactor", "should_trigger": true},
+  {"query": "lets go with vitest over jest, jest's ESM support is still flaky and I don't want babel in the loop", "should_trigger": true},
+  {"query": "resume where we left off yesterday on the csv export feature", "should_trigger": true},
+  {"query": "grab everything important from this conversation (decisions, the node 18 crash, the runbook path /srv/docs/platform/node-upgrade.md) and save it before I clear", "should_trigger": true},
+  {"query": "note that the staging login outage was caused by the redirect uri missing a trailing slash, we'll want that later", "should_trigger": true},
+  {"query": "/memoir coach — am I drifting?", "should_trigger": true},
+  {"query": "write a CLAUDE.md for this repo that documents the build commands and folder layout", "should_trigger": false},
+  {"query": "can you summarize this conversation for me in 5 bullets so I can paste it into slack for my team", "should_trigger": false},
+  {"query": "add a memoize decorator to the fibonacci helper in utils/math.py, it's recomputing everything", "should_trigger": false},
+  {"query": "write an ADR in docs/adr/0007-queue-backend.md comparing postgres and redis for our job queue, our template is in docs/adr/template.md", "should_trigger": false},
+  {"query": "my git stash has like 6 entries, help me figure out which one has the half-finished oauth work and restore it", "should_trigger": false},
+  {"query": "what's the difference between /compact and /clear in claude code? just curious how they work", "should_trigger": false},
+  {"query": "set up redis-backed session storage for the express app, sessions should survive restarts", "should_trigger": false},
+  {"query": "remember that I prefer tabs over spaces in all my projects from now on", "should_trigger": false},
+  {"query": "write a changelog entry for v2.3.0 from the git log since the last tag", "should_trigger": false},
+  {"query": "our app's state management is a mess, should we move from redux to zustand? list pros and cons", "should_trigger": false}
+]
