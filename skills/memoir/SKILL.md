@@ -12,6 +12,14 @@ Write only to the absolute active directory printed by `memoir.py prompt`. Don't
 - Otherwise, if you can run shell commands, run `python3 <this-skill-dir>/scripts/memoir.py prompt` and use the path it prints.
 - Otherwise, ask the user to run `memoir.py prompt` and paste the output.
 
+The path may end in `.agents/memoir` or `.claude/memoir`; the CLI picks it (FR-1.3), so don't "correct" it.
+
+# Store Access
+The store can sit outside what the sandbox lets you write to (a repo root above your working directory, `$MEMOIR_STORE`, a global path). Handle that by asking, never by working around it (FR-1.4):
+- If `memoir.py` prints `[Memoir] No write access to <path>`, or a fragment write is denied: stop. Give the user the absolute path and ask them to grant access. In Claude Code that is `/add-dir <path>` (run `! mkdir -p <path>` first if it doesn't exist); other agents have an equivalent writable-root option, or the user can set `MEMOIR_STORE`. Retry the same command once they confirm.
+- Don't write the fragment somewhere else: `reload` never sees it, so the session is silently lost. Don't retry outside the sandbox on your own: that grant is the user's to give.
+- If `memoir.py` prints `[Memoir] Could not update <path>/.gitignore ... Add this line manually: <line>`: carry on, then show the user the line and path and ask them to add it themselves. Don't bypass the sandbox to write it.
+
 # Fragment Taxonomy & Formatting
 Filenames are lowercase kebab-case with no underscores, spaces or uppercase letters (e.g. `decision-use-env-vars.md`), because `archive` and the `Supersedes:` matcher only recognize that shape; any other name can never be archived or superseded. Use exactly these prefixes:
 1. `decision-{slug}.md`: explicit architectural choices, constraints or tool selections.

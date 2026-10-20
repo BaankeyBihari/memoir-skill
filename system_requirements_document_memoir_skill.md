@@ -29,10 +29,12 @@ A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It i
 ### 3.1 Storage & Path Resolution
 * **FR-1.1:** The system MUST resolve the storage path (`$BASE_DIR`) using a strict cascade:
   1. `$MEMOIR_STORE` (Explicit Environment Variable Override)
-  2. Git Root (`<git-root>/.agents/memoir/`)
+  2. Git Root (`<git-root>/` store per FR-1.3)
   3. Global Fallback, only outside Git and only if `$MEMOIR_USE_GLOBAL=true` (`${XDG_CONFIG_HOME:-~/.config}/memoir/memories/{hash}/`, where `{hash}` is the first 8 hex characters of the SHA-256 of `$PWD`)
-  4. Current Working Directory (`$PWD/.agents/memoir/`)
+  4. Current Working Directory (`$PWD/` store per FR-1.3)
 * **FR-1.2:** The system MUST maintain two internal directories: `active/` and `archive/`.
+* **FR-1.3 (Store location):** At a git root or the current working directory, the store is `.agents/memoir` if it exists, else `.claude/memoir` if it exists, else `.agents/memoir`. When both exist, the system MUST use `.agents/memoir` and print a warning on stderr, because two stores split memory.
+* **FR-1.4 (Store access):** Every command except `path` MUST create `active/` and `archive/` and probe a write in the store before doing anything else. On failure it MUST print `[Memoir] No write access to <absolute path> (<OS error>)` and exit 3, and MUST NOT fall back to another location. On that message, or on any denied fragment write, the LLM MUST stop, give the user the absolute path and ask them to grant access (or set `$MEMOIR_STORE`). It MUST NOT write the fragment elsewhere or bypass the sandbox on its own, and MUST retry only after the user confirms.
 
 ### 3.2 CLI Commands (`memoir.py`)
 * **FR-2.1 (`init`):** MUST create the required directory structure (`active/` and `archive/`).
@@ -40,7 +42,7 @@ A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It i
 * **FR-2.3 (`archive`):** MUST move specified superseded files from `active/` to `archive/`, prepending a `YYYYMMDD-` timestamp to the filename to preserve chronological sorting. With `--superseded`, it MUST archive every active decision named on another active decision's `Supersedes:` line, and MUST be a no-op when there is nothing to archive. For each decision archived via `--superseded`, it MUST write a `Superseded-By:` back-link into the archived copy naming the decision that replaced it (idempotent), and MUST order the write so the back-link lands in the active copy before the move, keeping the operation crash-free (a fragment is never lost, only ever duplicated in the worst case).
 * **FR-2.4 (`resume`):** MUST output the `prompt` instruction (the absolute `active/` path), followed by a copy-paste ready prompt listing the exact absolute paths of all active files, `state-current.md` first, to bootstrap a new LLM session seamlessly.
 * **FR-2.5 (`path`):** MUST print the resolved `$BASE_DIR`, for user inspection.
-* **FR-2.6 (`.gitignore` hint):** Every command except `path` MUST, when the store resolves to the default Git-root path, add `.agents/memoir/` to the repository `.gitignore` (idempotent, append-only) so local memory stays out of version control and never pollutes pull requests. It MUST skip the hint when `$MEMOIR_STORE` points elsewhere or the directory is outside Git, and when the `.gitignore` already names `.agents/`.
+* **FR-2.6 (`.gitignore` hint):** Every command except `path` MUST, when the store resolves to a default root store (`.agents/memoir` or `.claude/memoir` under the Git root), add that path with a trailing `/` to the repository `.gitignore` (idempotent, append-only) so local memory stays out of version control and never pollutes pull requests. It MUST skip the hint when `$MEMOIR_STORE` points elsewhere, when the directory is outside Git, and when `git check-ignore` already reports the store ignored. `.gitignore` may itself be protected or read-only, so a failed write MUST NOT block the command: the CLI MUST print the exact line and the `.gitignore` path for the user to add manually, and the LLM MUST pass that request to the user (it MUST NOT bypass the sandbox to write it).
 
 ### 3.3 LLM Operations & Commands
 * **FR-3.1:** The LLM MUST enforce strict kebab-case naming for all generated files (e.g., `decision-auth-flow.md`).

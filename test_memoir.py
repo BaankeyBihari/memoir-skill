@@ -111,5 +111,44 @@ with tempfile.TemporaryDirectory() as tmp:
         assert not (Path(tmp)/".gitignore").exists(), "gitignore not created"
     finally:
         os.chdir(prev)
-    
+
+# --- FR-1.3 / FR-1.4: store location, access check, protected .gitignore ---
+def run_in(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MEMOIR_")}
+    return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=cwd, env=env, capture_output=True, text=True)
+
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp).resolve() / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    assert run_in(repo, "path").stdout.strip() == str(repo / ".agents" / "memoir")  # neither exists
+    (repo / ".claude" / "memoir").mkdir(parents=True)
+    out = run_in(repo, "path")
+    assert out.stdout.strip() == str(repo / ".claude" / "memoir"), out  # only .claude exists
+    (repo / ".gitignore").write_text(".claude/settings.local.json\n")
+    assert run_in(repo, "resume").returncode == 0
+    assert (repo / ".gitignore").read_text() == ".claude/settings.local.json\n.claude/memoir/\n"
+    (repo / ".agents" / "memoir").mkdir(parents=True)
+    out = run_in(repo, "path")
+    assert out.stdout.strip() == str(repo / ".agents" / "memoir") and "both" in out.stderr, out  # both: .agents wins
+
+    # protected .gitignore: command still succeeds, user gets the line to add
+    (repo / ".gitignore").write_text("node_modules\n")
+    (repo / ".gitignore").chmod(0o444)
+    out = run_in(repo, "resume")
+    (repo / ".gitignore").chmod(0o644)
+    if os.geteuid() != 0:
+        assert out.returncode == 0 and "Add this line manually: .agents/memoir/" in out.stderr, out
+        assert (repo / ".gitignore").read_text() == "node_modules\n"
+
+    # unwritable store: exit 3, message names the path, nothing created elsewhere
+    ro = Path(tmp) / "ro"
+    ro.mkdir()
+    ro.chmod(0o555)
+    if os.geteuid() != 0:
+        out = run(ro / "store", "resume")
+        assert out.returncode == 3 and f"No write access to {ro / 'store'}" in out.stderr, out
+        assert not (ro / "store").exists()
+    ro.chmod(0o755)
+
 print("ok")
