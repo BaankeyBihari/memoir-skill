@@ -77,6 +77,13 @@
       "prompt": "[Earlier in this session]\nUser: Add validation to the signup form: email format and password at least 12 chars.\nAssistant: Added validators; errors show as toast notifications.\nUser: No, show errors inline under each field, not toasts.\nAssistant: Updated: errors now show in a toast plus a red border on the field.\nUser: Again, no toasts. Inline text under the field only.\nAssistant: Removed the border; the toast now appears next to the field.\nUser: I already told you twice: no toasts at all. Plain inline error text below each input.\nAssistant: Done: plain inline text below each input, toasts removed.\n\n[Latest message]\nUser: /memoir coach",
       "expected_output": "Recommends CLEAR despite the unchanged goal because of 3 corrections. Captures 'inline errors, not toasts' as a decision naming toasts as rejected, lists it on the Files: line, cites the repeated correction in Why, and prints /clear then /memoir reload.",
       "files": ["evals/fixtures/coach-clear-on-friction"]
+    },
+    {
+      "id": 12,
+      "name": "capture-feedback",
+      "prompt": "[Earlier in this session]\nUser: Add input validation to the /signup handler.\nAssistant: Added checks for email and password length. To recap: I edited signup.ts, added two helpers, and updated the tests.\nUser: Skip the recap. I can read the diff.\nAssistant: Understood. Should validation use zod or hand-rolled checks?\nUser: zod. We already ship it for the API schemas, and hand-rolled checks drift from the types.\nAssistant: Switched to a zod schema. Summary of what I did: replaced the helpers with `signupSchema`, updated imports, reran tests.\nUser: Again, stop summarizing what you just did. I can read the diff.\nAssistant: Got it.\nUser: Also rename utils.ts to format.ts.\nAssistant: Renamed.\nUser: Commit it, and remember commit subjects are imperative.\nAssistant: Committed: \"add zod validation to signup\".\n\n[Latest message]\nUser: /memoir capture",
+      "expected_output": "Writes one feedback fragment (no recaps of completed work) whose Why: names the rejected recaps, one decision (zod over hand-rolled checks), no duplicate imperative-commit feedback, nothing for the one-off rename, overwrites state, and replies with 'Captured: 1 decisions, <n> logs, 0 references, 1 feedback, state updated' plus the paths (a log for the commit milestone is allowed).",
+      "files": ["evals/fixtures/capture-feedback"]
     }
   ]
 }
