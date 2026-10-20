@@ -240,6 +240,7 @@ def checks_coach_compact(run, fx):
         ("Exactly one /compact line", (len(compact) == 1, str(compact))),
         ("/compact focus names the billing/tax refactor", ("billing" in focus or "tax" in focus, focus[:200])),
         ("/compact focus names the absolute active path", (str(active) in (compact[0] if compact else ""), focus[:200])),
+        ("/compact focus is at most 300 chars excluding the path", (bool(compact) and len(compact[0].replace(str(active), "")) <= 300, f"{len(compact[0].replace(str(active), '')) if compact else 0} chars")),
         ("No /clear or /memoir reload", (not re.search(r"^\s*/(?:clear|memoir reload)\b", r, re.M), "")),
     ]
 
