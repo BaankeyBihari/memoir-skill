@@ -63,7 +63,7 @@ Execute each command with your native file-writing tools, targeting the absolute
 * `/memoir decision [text]`: write `decision-{slug}.md`. If it replaces an earlier decision in the active directory, name that file in `Supersedes:`.
 * Automatic decisions: when the user chooses among alternatives or says "decision:" or "let's go with X", write `decision-{slug}.md` as above without waiting for `/memoir decision` (FR-3.8).
 * `/memoir log [text]`: write `log-{slug}.md`.
-* `/memoir reference [text]`: write `reference-{slug}.md`.
+* `/memoir reference [text]`: write `reference-{slug}.md`. The `Target` must be a URL or path the user stated verbatim, or an absolute path you checked exists. Don't build a path from a bare or relative filename without checking it; skip the reference instead, because a later session will trust the pointer and follow it to nothing.
 * `/memoir state`: overwrite `state-current.md` using the state format above.
 * `/memoir capture`: save everything from the conversation that isn't recorded yet, so nothing is lost when the chat is cleared.
   1. Run `python3 <this-skill-dir>/scripts/memoir.py resume` and read the fragments it lists, so you know what is already recorded.

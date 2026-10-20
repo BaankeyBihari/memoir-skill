@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EVALS = json.loads((ROOT / "evals" / "evals.json").read_text())["evals"]
+PROMPTS = {e["id"]: e["prompt"] for e in EVALS}
 CONFIGS = ("with_skill", "old_skill")
 TODAY = date.today()
 KEBAB = r"[a-z0-9]+(?:-[a-z0-9]+)*"
@@ -43,6 +44,13 @@ def in_order(doc: str, prefixes: list[str]) -> bool:
     lines = doc.splitlines()
     idx = [next((i for i, l in enumerate(lines) if l.startswith(p)), -1) for p in prefixes]
     return -1 not in idx and idx == sorted(idx)
+
+
+def refs_grounded(active: Path, prompt: str) -> tuple[bool, str]:
+    """Every reference Target is a URL, an existing path, or stated verbatim in the prompt."""
+    bad = [t for p in active.glob("reference-*.md") if (t := field(text(p), "Target"))
+           and not (t.startswith(("http://", "https://")) or Path(t).exists() or t in prompt)]
+    return (not bad, f"ungrounded: {bad}")
 
 
 def count_said(reply: str, n: int, kind: str) -> bool:
@@ -97,6 +105,7 @@ def checks_coach(run, fx):
         ("No hand-written resume prompt", ("Load the following files" not in r and "Based on the state file" not in r, "")),
         ("State updated to the CI migration goal", (field(s, "Updated") == str(TODAY) and ("github actions" in goal or "travis" in goal), f"Updated {field(s, 'Updated')}; goal {goal!r}")),
         ("Coach does not archive (REST decision still active)", ((active / "decision-use-rest-api.md").is_file(), "")),
+        ("Every reference Target is a URL, existing path or user-stated path", refs_grounded(active, PROMPTS[3])),
     ]
 
 
@@ -182,6 +191,7 @@ def checks_capture(run, fx):
         ("pnpm decision unchanged", (text(active / "decision-use-pnpm.md") == text(fx / "active" / "decision-use-pnpm.md"), "")),
         ("Exactly one log, about the Node 18 ESM crash", (len(logs) == 1 and "node 18" in text(logs[0]).lower(), str([p.name for p in logs]))),
         ("Exactly one reference, targeting the runbook path", (len(refs) == 1 and field(text(refs[0]), "Target") == "/srv/docs/platform/node-upgrade.md", str([p.name for p in refs]))),
+        ("Every reference Target is a URL, existing path or user-stated path", refs_grounded(active, PROMPTS[9])),
         ("State written today with Node 20 bump as blocked", (field(s, "Updated") == str(TODAY) and "node 20" in blocked, f"Updated {field(s, 'Updated')}; blocked {blocked!r}")),
         ("Reply has 'Captured: 1 decisions, 1 logs, 1 references, state updated'", (bool(re.search(r"Captured: 1 decisions?, 1 logs?, 1 references?, state updated", r)), next((l for l in r.splitlines() if "Captured" in l), "(missing)"))),
     ]

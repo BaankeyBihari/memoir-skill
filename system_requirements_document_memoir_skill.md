@@ -45,7 +45,7 @@ A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It i
 * **FR-3.1:** The LLM MUST enforce strict kebab-case naming for all generated files (e.g., `decision-auth-flow.md`).
 * **FR-3.2 (`/memoir decision [text]`):** MUST extract explicit architectural choices and write to `active/decision-{slug}.md`, recording the decision, why, rejected alternatives, deferred work, and any superseded decision.
 * **FR-3.3 (`/memoir log [text]`):** MUST extract event/milestone logs and write to `active/log-{slug}.md`.
-* **FR-3.4 (`/memoir reference [text]`):** MUST record external context/paths to `active/reference-{slug}.md`.
+* **FR-3.4 (`/memoir reference [text]`):** MUST record external context/paths to `active/reference-{slug}.md`. The `Target` MUST be a URL or path the user stated verbatim, or an absolute path verified to exist; the LLM MUST NOT build a path from a bare or relative filename without verifying it, and MUST skip the reference when neither holds.
 * **FR-3.5 (`/memoir state`):** MUST overwrite `active/state-current.md` using a strict, anti-bloat schema limited to 3 bullets per section:
   * **Goal:** [Current objective]
   * **Completed:** [What was just done]
