@@ -1,0 +1,185 @@
+"""Set up and grade memoir skill eval runs.
+
+    python3 evals/harness.py setup <iteration-dir>   # seed run dirs from evals/fixtures
+    python3 evals/harness.py grade <iteration-dir>   # write grading.json + outputs/files-after-run.md
+
+Layout per run: <iteration>/eval-<id>-<name>/<config>/run-1/{store,project,outputs}.
+"""
+import json
+import re
+import shutil
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+EVALS = json.loads((ROOT / "evals" / "evals.json").read_text())["evals"]
+CONFIGS = ("with_skill", "old_skill")
+TODAY = date.today()
+KEBAB = r"[a-z0-9]+(?:-[a-z0-9]+)*"
+
+
+def text(p: Path) -> str:
+    return p.read_text() if p.is_file() else ""
+
+
+def field(doc: str, name: str) -> str:
+    m = re.search(rf"^{re.escape(name)}:\s*(.*)$", doc, re.M)
+    return m.group(1).strip() if m else ""
+
+
+def sections(doc: str) -> dict[str, list[str]]:
+    out, cur = {}, None
+    for line in doc.splitlines():
+        if line.startswith("## "):
+            cur = line[3:].strip()
+            out[cur] = []
+        elif cur and line.lstrip().startswith("- "):
+            out[cur].append(line)
+    return out
+
+
+def in_order(doc: str, prefixes: list[str]) -> bool:
+    lines = doc.splitlines()
+    idx = [next((i for i, l in enumerate(lines) if l.startswith(p)), -1) for p in prefixes]
+    return -1 not in idx and idx == sorted(idx)
+
+
+def count_said(reply: str, n: int, kind: str) -> bool:
+    return bool(re.search(rf"\b{n}\b[^\n\d]{{0,20}}{kind}|{kind}s?\W{{0,5}}{n}\b", reply, re.I))
+
+
+# Each check: (assertion text, fn(run_dir, fixture_dir) -> (passed, evidence)).
+def checks_auto_decision(run, fx):
+    active = run / "store" / "active"
+    new = sorted(p for p in active.glob("decision-*.md") if p.name != "decision-use-sqlite.md")
+    d = text(new[0]) if new else ""
+    name = new[0].name if new else "(none)"
+    return [
+        ("Exactly one new decision fragment written", (len(new) == 1, f"new: {[p.name for p in new]}")),
+        ("Filename is lowercase kebab-case decision-*.md", (bool(re.fullmatch(rf"decision-{KEBAB}\.md", name)), name)),
+        ("Has all 7 template fields in order", (in_order(d, ["# ", "Date:", "Supersedes:", "Decision:", "Why:", "Alternatives:", "Deferred:"]), d[:300])),
+        ("Date is today", (field(d, "Date") == str(TODAY), field(d, "Date"))),
+        ("Supersedes names decision-use-sqlite.md", (field(d, "Supersedes") == "decision-use-sqlite.md", field(d, "Supersedes"))),
+        ("Alternatives names both WAL and Redis", (all(k in field(d, "Alternatives").lower() for k in ("wal", "redis")), field(d, "Alternatives"))),
+        ("Deferred mentions read replicas", ("replica" in field(d, "Deferred").lower(), field(d, "Deferred"))),
+        ("Old decision left in active (archiving happens on reload)", ((active / "decision-use-sqlite.md").is_file(), "")),
+    ]
+
+
+def checks_state(run, fx):
+    s = text(run / "store" / "active" / "state-current.md")
+    sec = sections(s)
+    want = ["Goal", "Completed", "Blocked/Pending", "Next Action"]
+    return [
+        ("Updated: is today", (field(s, "Updated") == str(TODAY), field(s, "Updated"))),
+        ("Stale CI state replaced", ("ci pipeline" not in s.lower() and "lint job" not in s.lower(), s[:200])),
+        ("Has Goal, Completed, Blocked/Pending, Next Action in order", (list(sec) == want, str(list(sec)))),
+        ("Every section has 1 to 3 bullets", (bool(sec) and all(1 <= len(v) <= 3 for v in sec.values()), str({k: len(v) for k, v in sec.items()}))),
+        ("Blocked/Pending mentions the missing Redis credentials", ("redis" in " ".join(sec.get("Blocked/Pending", [])).lower(), str(sec.get("Blocked/Pending")))),
+        ("Next Action mentions app.py", ("app.py" in " ".join(sec.get("Next Action", [])), str(sec.get("Next Action")))),
+    ]
+
+
+def checks_coach(run, fx):
+    active = run / "store" / "active"
+    r = text(run / "outputs" / "response.md")
+    lines = [l.strip() for l in r.splitlines() if l.strip()]
+    i = lines.index("/clear") if "/clear" in lines else -1
+    s = text(active / "state-current.md")
+    goal = " ".join(sections(s).get("Goal", [])).lower()
+    return [
+        ("Recommends CLEAR with the coach header", (bool(re.search(r"^\[Memoir Coach\] CLEAR\s*[—-]+\s*\S", r, re.M)), next((l for l in lines if "Memoir Coach" in l), "(no header)"))),
+        ("State saved line has the absolute active path", (f"State saved -> {active}/state-current.md" in r, next((l for l in lines if l.startswith("State saved")), "(missing)"))),
+        ("Superseded line lists exactly decision-use-rest-api.md", (bool(re.search(r"^Superseded: decision-use-rest-api\.md\s*$", r, re.M)), next((l for l in lines if l.startswith("Superseded:")), "(missing)"))),
+        ("/clear then /memoir reload as bare consecutive lines", (i >= 0 and i + 1 < len(lines) and lines[i + 1] == "/memoir reload", str(lines[i:i + 2]) if i >= 0 else "no bare /clear line")),
+        ("No hand-written resume prompt", ("Load the following files" not in r and "Based on the state file" not in r, "")),
+        ("State updated to the CI migration goal", (field(s, "Updated") == str(TODAY) and ("github actions" in goal or "travis" in goal), f"Updated {field(s, 'Updated')}; goal {goal!r}")),
+        ("Coach does not archive (REST decision still active)", ((active / "decision-use-rest-api.md").is_file(), "")),
+    ]
+
+
+def checks_reload(run, fx):
+    active, archive = run / "store" / "active", run / "store" / "archive"
+    r = text(run / "outputs" / "response.md")
+    t = text(run / "outputs" / "transcript.md")
+    archived = archive / f"{TODAY:%Y%m%d}-decision-use-session-cookies.md"
+    others = [p for p in (fx / "active").glob("*.md") if p.name != "decision-use-session-cookies.md"]
+    changed = [p.name for p in others if text(active / p.name) != p.read_text()]
+    # The archive step names the superseded file; only reads of active fragments count.
+    names = [n for n in re.findall(rf"(?:state-current|decision-{KEBAB}|reference-{KEBAB}|log-{KEBAB})\.md", t)
+             if n != "decision-use-session-cookies.md"]
+    project_files = [str(p.relative_to(run)) for p in (run / "project").rglob("*") if p.is_file()]
+    return [
+        ("Superseded decision moved to archive/YYYYMMDD-…", (archived.is_file() and not (active / archived.name[9:]).exists(), str(sorted(p.name for p in archive.glob("*"))))),
+        ("Other fragments untouched", (not changed, f"changed: {changed}")),
+        ("Read state-current.md before other fragments (self-reported transcript)", (bool(names) and names[0] == "state-current.md", str(names[:4]))),
+        ("Reply states the PKCE goal", ("pkce" in r.lower(), "")),
+        ("Reply states the token-refresh next action", ("refresh" in r.lower(), "")),
+        ("Reply names the archived file", ("decision-use-session-cookies" in r, "")),
+        ("Reply counts 2 decisions, 1 reference, 1 log", (all(count_said(r, n, k) for n, k in ((2, "decision"), (1, "reference"), (1, "log"))), r[:400])),
+        ("Waited: no project files written", (not project_files, str(project_files))),
+    ]
+
+
+def checks_trivial(run, fx):
+    decisions = [p.name for p in (run / "store" / "active").glob("decision-*.md")]
+    u = text(run / "project" / "users.py")
+    return [
+        ("(proposed) No decision fragment for a parameter-naming choice", (not decisions, str(decisions))),
+        ("users.py written with a user_id parameter", ("def " in u and "user_id" in u, u[:200])),
+    ]
+
+
+CHECKS = {1: checks_auto_decision, 2: checks_state, 3: checks_coach, 4: checks_reload, 5: checks_trivial}
+
+
+def run_dirs(iteration: Path):
+    for e in EVALS:
+        eval_dir = iteration / f"eval-{e['id']}-{e['name']}"
+        for config in CONFIGS:
+            yield e, eval_dir, eval_dir / config / "run-1"
+
+
+def setup(iteration: Path):
+    for e, eval_dir, run in run_dirs(iteration):
+        fx = ROOT / e["files"][0]
+        shutil.copytree(fx, run / "store", ignore=shutil.ignore_patterns(".gitkeep"))
+        (run / "store" / "archive").mkdir()
+        (run / "project").mkdir()
+        (run / "outputs").mkdir()
+        names = [c[0] for c in CHECKS[e["id"]](run, fx)]
+        meta = {"eval_id": e["id"], "eval_name": e["name"], "prompt": e["prompt"], "assertions": names}
+        for d in (eval_dir, run.parent):
+            (d / "eval_metadata.json").write_text(json.dumps(meta, indent=2))
+        print(run)
+
+
+def dump_files(run: Path) -> str:
+    out = []
+    for base in ("store", "project"):
+        for p in sorted((run / base).rglob("*")):
+            if p.is_file():
+                body = p.read_text(errors="replace") if p.suffix in (".md", ".py", "") else f"({p.stat().st_size} bytes)"
+                out.append(f"## {p.relative_to(run)}\n\n```\n{body}\n```\n")
+    return "\n".join(out) or "(no files)"
+
+
+def grade(iteration: Path):
+    for e, _, run in run_dirs(iteration):
+        results = CHECKS[e["id"]](run, ROOT / e["files"][0])
+        exps = [{"text": t, "passed": bool(ok), "evidence": ev} for t, (ok, ev) in results]
+        passed = sum(x["passed"] for x in exps)
+        timing = json.loads(text(run / "timing.json") or "{}")
+        grading = {
+            "expectations": exps,
+            "summary": {"passed": passed, "failed": len(exps) - passed, "total": len(exps), "pass_rate": round(passed / len(exps), 2)},
+            "timing": {"total_duration_seconds": timing.get("total_duration_seconds", 0.0)},
+        }
+        (run / "grading.json").write_text(json.dumps(grading, indent=2))
+        (run / "outputs" / "files-after-run.md").write_text(dump_files(run))
+        print(f"{run.parent.parent.name}/{run.parent.name}: {passed}/{len(exps)}")
+
+
+if __name__ == "__main__":
+    {"setup": setup, "grade": grade}[sys.argv[1]](Path(sys.argv[2]).resolve())
