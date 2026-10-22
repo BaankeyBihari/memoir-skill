@@ -8,11 +8,21 @@ Full requirements: [system_requirements_document_memoir_skill.md](system_require
 
 Requires Python 3.11+. [`uv`](https://docs.astral.sh/uv/) is optional.
 
+**Claude Code**
+
 ```sh
 ln -s "$PWD/skills/memoir" ~/.claude/skills/memoir
 ```
 
 Restart Claude Code. `/memoir` is now available in every project.
+
+**Antigravity (`agy`)**
+
+```sh
+agy plugin install https://github.com/BaankeyBihari/memoir-skill
+```
+
+Or inside an interactive `agy` session: `/plugin install https://github.com/BaankeyBihari/memoir-skill`.
 
 ## Usage
 
