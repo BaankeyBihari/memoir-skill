@@ -1,0 +1,4 @@
+{
+  "name": "memoir",
+  "description": "Project-scoped memory for LLM CLI sessions: decisions, logs, references, feedback and a compact state snapshot as Markdown files inside your repository."
+}
