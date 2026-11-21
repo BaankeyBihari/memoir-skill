@@ -156,4 +156,3 @@ State (max 3 bullets per section):
     - <current errors or open threads>
     ## Next Action
     - <the exact next step>
-

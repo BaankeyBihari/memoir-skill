@@ -29,14 +29,14 @@ Installer flags:
 | `--store <path>` | Initialize a custom store path instead of `~/.memoir` |
 | `--version <YYYY.MM.N>` | Pin a specific release tag (e.g. `2026.11.1`) |
 
-**Manual skill symlinks (Claude Code)**
+### Manual skill symlinks (Claude Code)
 
 ```sh
 ln -s "$PWD/skills/memoir" ~/.claude/skills/memoir
 ln -s "$PWD/skills/memoir-wiki" ~/.claude/skills/memoir-wiki
 ```
 
-**Antigravity (`agy`)**
+### Antigravity (`agy`)
 
 ```sh
 agy plugin install https://github.com/BaankeyBihari/memoir-skill

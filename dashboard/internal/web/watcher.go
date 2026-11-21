@@ -155,7 +155,7 @@ func NewWatcher(root string, hub *Hub, debounce time.Duration, onChange func(Eve
 
 // Start runs the event loop until ctx is canceled.
 func (w *Watcher) Start(ctx context.Context) {
-	defer w.fsw.Close()
+	defer func() { _ = w.fsw.Close() }()
 
 	var (
 		timer   *time.Timer

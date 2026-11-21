@@ -10,7 +10,7 @@ SCRIPT = Path(__file__).parent / "skills" / "memoir" / "scripts" / "memoir.py"
 
 def run(store: Path, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "MEMOIR_STORE": str(store)}
-    return subprocess.run([sys.executable, str(SCRIPT), *args], env=env, capture_output=True, text=True)
+    return subprocess.run([sys.executable, str(SCRIPT), *args], env=env, capture_output=True, text=True, check=False)
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory() as tmp:
     out = run(store, "archive", "--superseded")
     assert out.returncode == 0
     assert "Archived 1 files" in out.stdout, out
-    archived = base / "archive" / f"{datetime.now():%Y%m%d}-decision-old.md"
+    archived = base / "archive" / f"{datetime.now().astimezone():%Y%m%d}-decision-old.md"
     assert archived.exists(), "Archived file not found"
     archived_lines = archived.read_text().splitlines()
     assert "Supersedes: none" in archived_lines

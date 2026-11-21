@@ -6,7 +6,7 @@ description: Compile memoir session fragments (decisions, logs, references, feed
 # Role
 You are the Memoir Wiki compiler. You turn the point-in-time fragments that the memoir skill writes into a living wiki. Each page synthesizes one topic, links to related pages with `[[wikilinks]]`, and records where its facts came from. You read fragments and never write them.
 
-# Wiki Root
+## Wiki Root
 Resolve the wiki from the CLI's output, never from a guessed or relative path (NFR-3.1). A wiki written anywhere else is invisible to every other session and to `memoir-ui`.
 
 1. Run `python3 <this-skill-dir>/../memoir/scripts/memoir.py path`. The memoir skill is installed next to this one. If the script isn't there, ask the user to run `memoir.py path` and paste the output.
@@ -16,19 +16,19 @@ Resolve the wiki from the CLI's output, never from a guessed or relative path (N
    - `<STORE_ROOT>/standalone/<slug>`: stop. Reply: "memoir-wiki needs a Git repository or a pinned workspace. Run `python3 <memoir-skill-dir>/scripts/memoir.py pin <workspace-root>`, then rerun." Pinning applies only to fragments written after it. Fragments already in the standalone scope stay where they are.
 3. The wiki root is `<scope root>/wiki/`. Create it on first write.
 
-# Isolation
+## Isolation
 Each scope has exactly one wiki (FR-4.5). Read fragments only under the current scope root and write only under its `wiki/`, apart from the opt-in repository mirror in ingest step 10. Never merge wikis or build a cross-repo catalog. To point at another scope's page, for example when an umbrella pinned workspace needs a repo's decision, use a read-only cross-wiki link `[[<scope>:<page-path>]]`. Never edit, copy or index the other wiki.
 
-# Store Access
+## Store Access
 If a read or write under the store is denied, show the absolute path and ask the user to grant access to the store root (default `~/.memoir`, or `$MEMOIR_STORE`). In Claude Code, use `/add-dir` with the absolute store root. Retry after access is granted.
 
-# Schema
+## Schema
 Read `references/schema.md` before the first write in a session. It defines the page templates and header fields, the `index.md` catalog, the append-only `log.md` entries (`## [YYYY-MM-DD] <op> | <summary>`), the categories (`architecture/`, `decisions/`, `entities/`, `troubleshooting/`, `conventions.md`), and the local and cross-wiki link rules. Pages you write must match it, because `memoir-ui` and `lint` parse those formats.
 
-# Commands
+## Commands
 Confirm each page written in one line with its path relative to the wiki root. When ingest or query has nothing to do, say so in one line and write nothing, not even a log entry. Lint is the exception: it logs a clean result too.
 
-## `/memoir-wiki ingest`
+### `/memoir-wiki ingest`
 Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: the watermark in `wiki/.ingest-state.json` (format in `references/schema.md`) makes rerunning it cheap and safe.
 
 1. List what changed. Run this with the scope root from **Wiki Root**:
@@ -96,7 +96,7 @@ Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: th
 
     It copies every `wiki/**/*.md` to `<MAIN_ROOT>/<sync_target>` (default `docs/wiki`), where `MAIN_ROOT` is the main checkout above `git rev-parse --git-common-dir`, so a worktree mirrors into the main checkout as well. `.ingest-state.json` is not Markdown and never leaves the store. It refuses an absolute `sync_target` or one containing `..`, because this is the only step allowed to write into a working tree, and only inside it. It overwrites matching files and deletes nothing: a `not in wiki:` line is a file the user may want to remove. Cross-wiki `[[<scope>:<page>]]` links are copied verbatim and resolve only in the store. Add a `synced <n> pages to <dest>` bullet to this ingest's log entry, and pass any `not in wiki:` lines on to the user. `sync off` means the mirror is disabled, so do nothing.
 
-## `/memoir-wiki query [question]`
+### `/memoir-wiki query [question]`
 Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
 
 1. Read `wiki/index.md` first. It's the map, and reading it first stops you from grepping the store or opening fragments. If the wiki or its index doesn't exist, say so and suggest `/memoir-wiki ingest`.
@@ -105,7 +105,7 @@ Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
 4. File the answer back when it combined two or more pages into something a later session would ask again, such as how a subsystem fits together or why a chain of decisions went the way it did. Write it to `architecture/<topic>.md`, using the architecture template with the pages it drew on in `Sources:`. If a matching page already exists, update it. A single-page lookup or a one-off answer is not worth filing.
 5. When you file a page, add it to `index.md`, then append `## [YYYY-MM-DD] query | <question in under 80 characters>` to `log.md` with a `filed [[architecture/<topic>]]` bullet. Write only to the current scope's wiki, even when the answer used a cross-wiki page.
 
-## `/memoir-wiki lint`
+### `/memoir-wiki lint`
 Audit the wiki for structural rot and drift from the code (FR-4.4). Lint reports problems and edits nothing except `log.md`. Fixes belong to the user's call or to a later ingest.
 
 1. Check the links. Run this with the wiki root and the store root (the part of the `memoir.py path` output before `repos/` or `pinned/`):

@@ -1,0 +1,74 @@
+[tools]
+go = "1.27"
+python = "3.11"
+node = "lts"
+golangci-lint = "latest"
+ruff = "latest"
+shellcheck = "latest"
+"npm:markdownlint-cli2" = "latest"
+typos = "latest"
+
+[env]
+VERSION = "dev"
+
+[tasks.build]
+description = "Build static memoir-ui binary into dist/memoir-ui"
+run = 'mkdir -p dist && cd dashboard && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o ../dist/memoir-ui .'
+
+[tasks."build:skills"]
+description = "Package memoir and memoir-wiki skills into dist/memoir-skills.tar.gz"
+run = "mkdir -p dist && tar -czf dist/memoir-skills.tar.gz -C skills --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' memoir memoir-wiki"
+
+[tasks.test]
+description = "Run CLI, installer, and dashboard test suites"
+run = "python3 test_memoir.py && python3 scripts/test_install.py && (cd dashboard && go test -race ./...)"
+
+[tasks."lint:go"]
+description = "Run gofmt, go vet, and golangci-lint on dashboard/"
+run = 'test -z "$(gofmt -l dashboard)" && (cd dashboard && go vet ./... && golangci-lint run ./...)'
+
+[tasks."lint:py"]
+description = "Run ruff check on Python CLI and test scripts"
+run = "ruff check skills/memoir/scripts/memoir.py test_memoir.py scripts/test_install.py"
+
+[tasks."lint:shell"]
+description = "Run bash syntax check and shellcheck on scripts/install.sh"
+run = "bash -n scripts/install.sh && shellcheck scripts/install.sh"
+
+[tasks."lint:md"]
+description = "Run markdownlint-cli2 across repository Markdown files"
+run = 'markdownlint-cli2 "**/*.md"'
+
+[tasks."lint:typos"]
+description = "Run typos spell checker across repository"
+run = "typos"
+
+[tasks."lint:skills"]
+description = "Validate skill frontmatter, executable bits, and schema files"
+run = '''
+python3 - <<'PY'
+import os, re
+from pathlib import Path
+for skill in (Path("skills/memoir"), Path("skills/memoir-wiki")):
+    text = (skill / "SKILL.md").read_text(encoding="utf-8")
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    assert m, f"{skill}/SKILL.md: missing frontmatter"
+    meta = dict(line.split(":", 1) for line in m.group(1).splitlines() if ":" in line)
+    name, desc = meta.get("name", "").strip(), meta.get("description", "").strip()
+    assert re.fullmatch(r"[a-z0-9-]{1,64}", name), f"bad name: {name!r}"
+    assert name == skill.name, f"name {name!r} != folder {skill.name!r}"
+    assert 0 < len(desc) <= 1024, f"description length {len(desc)}"
+assert os.access("skills/memoir/scripts/memoir.py", os.X_OK), "memoir.py not executable"
+assert os.access("scripts/install.sh", os.X_OK), "scripts/install.sh not executable"
+assert Path("skills/memoir-wiki/references/schema.md").is_file(), "memoir-wiki schema missing"
+print("skill ok")
+PY
+'''
+
+[tasks.lint]
+description = "Run all Go, Python, Shell, Markdown, typos, and skill lint checks"
+depends = ["lint:go", "lint:py", "lint:shell", "lint:md", "lint:typos", "lint:skills"]
+
+[tasks.clean]
+description = "Remove build artifacts in dist/ and clean Go test cache"
+run = "rm -rf dist && (cd dashboard && go clean -testcache)"

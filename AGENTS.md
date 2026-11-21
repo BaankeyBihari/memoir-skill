@@ -10,6 +10,7 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - `skills/memoir-wiki/`: cumulative Markdown knowledge compiler skill (`SKILL.md`, `references/schema.md`).
 - `dashboard/`: zero-dependency single-binary Go web browser (`memoir-ui`) with `embed.FS` and `fsnotify` SSE live reload.
 - `scripts/install.sh`: unified installer for both skills and `memoir-ui`.
+- `mise.toml`: repo build, test, and lint task runner configuration.
 - `test_memoir.py`: self-check for `memoir.py` and `README.md` / `SKILL.md` invariants.
 - `scripts/test_install.py`: stdlib test suite for `scripts/install.sh`.
 
@@ -22,5 +23,5 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - Fragment filenames are lowercase kebab-case: `decision-*`, `log-*`, `reference-*`, or `feedback-*` with an `.md` extension, plus the single `state-current.md`.
 - The LLM never guesses storage paths. It uses only the exact absolute path printed by `memoir.py` (NFR-3.1).
 - Releases use bare, zero-padded, 1-based CalVer tags (`YYYY.MM.N`, e.g., `2026.11.1`) via `.github/workflows/release.yml`.
-- Run `python3 test_memoir.py`, `python3 scripts/test_install.py`, and `cd dashboard && go test -race ./...` before calling a change done.
+- Run `mise run lint`, `mise run test`, and `mise run build` (or `python3 test_memoir.py`, `python3 scripts/test_install.py`, and `cd dashboard && go test -race ./...`) before calling a change done.
 - Never add AI attribution to commits, PRs, issues, or files.

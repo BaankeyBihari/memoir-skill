@@ -398,7 +398,7 @@ func ExtractTitle(absPath string) string {
 	if err != nil {
 		return fallback
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(io.LimitReader(f, 4096))
 	for scanner.Scan() {
