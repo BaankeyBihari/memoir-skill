@@ -23,45 +23,9 @@ from datetime import datetime
 ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
 SUPERSEDED_RE = re.compile(r"decision-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
 
-def get_git_root():
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], 
-            capture_output=True, text=True, check=True
-        )
-        return Path(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
+def store_root() -> Path:
+    return Path(os.environ.get("MEMOIR_STORE") or "~/.memoir").expanduser().resolve()
 
-def root_store(root: Path) -> Path:
-    """`.agents/memoir`, else an existing `.claude/memoir`; `.agents/memoir` wins when both exist."""
-    agents, claude = root / ".agents" / "memoir", root / ".claude" / "memoir"
-    if claude.is_dir() and agents.is_dir():
-        print(f"[Memoir] Warning: both {agents} and {claude} exist; using {agents}.", file=sys.stderr)
-    return claude if claude.is_dir() and not agents.is_dir() else agents
-
-def resolve_store():
-    # 1. Explicit Override
-    memoir_store = os.environ.get("MEMOIR_STORE")
-    if memoir_store:
-        return Path(memoir_store).expanduser()
-
-    # 2. Git Workspace
-    git_root = get_git_root()
-    if git_root:
-        return root_store(git_root)
-
-    # 3. Non-Git Local / Global Fallback
-    cwd = Path.cwd()
-    project_slug = hashlib.sha256(str(cwd).encode()).hexdigest()[:8]
-    
-    use_global = os.environ.get("MEMOIR_USE_GLOBAL", "false").lower() == "true"
-    if use_global:
-        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        return config_home / "memoir" / "memories" / project_slug
-
-    # 4. Default to CWD
-    return root_store(cwd)
 
 def check_access(base_dir: Path) -> None:
     """Create the store and probe a write; exit 3 so the caller can ask the user for access."""
@@ -81,26 +45,6 @@ def init_store(base_dir: Path):
     print(f"[Memoir] Initialized store at: {base_dir.absolute()}")
     return active_dir, archive_dir
 
-def ensure_gitignore_hint(base_dir: Path) -> None:
-    """Keep the default Git-root store out of commits by adding it to the repository .gitignore."""
-    git_root = get_git_root()
-    if git_root is None or base_dir not in (git_root / ".agents" / "memoir", git_root / ".claude" / "memoir"):
-        return
-
-    hint = f"{base_dir.relative_to(git_root).as_posix()}/"
-    ignored = subprocess.run(["git", "check-ignore", "-q", hint], cwd=git_root).returncode == 0
-    if ignored:
-        return
-    gitignore = git_root / ".gitignore"
-    try:
-        existing = gitignore.read_text() if gitignore.exists() else ""
-        with gitignore.open("a") as f:
-            if existing and not existing.endswith("\n"):
-                f.write("\n")
-            f.write(hint + "\n")
-    except OSError as e:
-        print(f"[Memoir] Could not update {gitignore} ({e.strerror or e}). Add this line manually: {hint}", file=sys.stderr)
-
 def generate_prompt(base_dir: Path):
     active_dir = base_dir / "active"
     print(f"SYSTEM CONTEXT INJECTION:")
@@ -118,6 +62,18 @@ def find_superseded(base_dir: Path) -> dict[str, str]:
                     names[name] = path.name
     return {n: by for n, by in sorted(names.items()) if (active_dir / n).is_file()}
 
+def atomic_write(path: Path, contents: str) -> None:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
+        temporary = Path(tmp.name)
+        try:
+            tmp.write(contents)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def add_superseded_by(path: Path, by: str) -> None:
     """Write a `Superseded-By:` back-link right after the `Supersedes:` line, once."""
     lines = path.read_text().splitlines()
@@ -126,7 +82,7 @@ def add_superseded_by(path: Path, by: str) -> None:
         return
     i = next((k + 1 for k, line in enumerate(lines) if line.startswith("Supersedes:")), len(lines))
     lines.insert(i, link)
-    path.write_text("\n".join(lines) + "\n")
+    atomic_write(path, "\n".join(lines) + "\n")
 
 def archive_files(base_dir: Path, target_files: list[str]):
     active_dir = base_dir / "active"
@@ -199,10 +155,9 @@ def main():
     subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
 
     args = parser.parse_args()
-    base_dir = resolve_store()
+    base_dir = store_root()
     if args.command != "path":
         check_access(base_dir)
-        ensure_gitignore_hint(base_dir)
 
     if args.command == "path":
         print(base_dir.absolute())
