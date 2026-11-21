@@ -38,7 +38,7 @@ memoir-skill/
 │   └── test_install.py                            # Stdlib installer checks
 ├── .github/
 │   └── workflows/
-│       └── release-ui.yml                         # Cross-platform Go binary release workflow
+│       └── release.yml                            # CalVer unified skills + Go binary release workflow
 ├── skills/
 │   ├── memoir/                                    # Skill 1: Session compaction & state persistence
 │   │   ├── SKILL.md
@@ -212,12 +212,12 @@ All v1 fragment schemas and slash commands remain unchanged:
 
 ## 7. Installer & Release Requirements
 
-* **FR-6.1 (`scripts/install.sh`):** Idempotent Bash installer supporting `--skills-only`, `--ui-only`, and `--store <path>`:
-  1. Copy `skills/memoir` and `skills/memoir-wiki` into `~/.agents/skills/`.
-  2. Symlink both skills into `~/.claude/skills/`, `~/.codex/skills/`, `~/.pi/agent/skills/`, and `~/.gemini/antigravity/skills/` when those parent directories exist.
-  3. Download the matching OS/arch `memoir-ui` binary from GitHub Releases into `~/.local/bin/memoir-ui` (falling back to `go install ./dashboard` if Go is installed locally).
+* **FR-6.1 (`scripts/install.sh`):** Idempotent Bash installer supporting `--skills-only`, `--ui-only`, `--store <path>`, and `--version <YYYY.MM.N>`:
+  1. When `--version` is unset inside a local checkout, install skills from `skills/`; otherwise download `memoir-skills.tar.gz` from the target (or latest) GitHub Release and verify its SHA-256 against `SHA256SUMS` (falling back to `main.tar.gz` only when `--version` is unset and no release archive is available).
+  2. Copy `memoir` and `memoir-wiki` into `~/.agents/skills/` and symlink both skills into `~/.claude/skills/`, `~/.codex/skills/`, `~/.pi/agent/skills/`, and `~/.gemini/antigravity/skills/` when those parent directories exist.
+  3. Download the matching OS/arch `memoir-ui` binary from GitHub Releases, verify its SHA-256 against `SHA256SUMS`, and install into `~/.local/bin/memoir-ui` (falling back to `go install ./dashboard` when `--version` is unset and Go is installed locally).
   4. Initialize `~/.memoir/` if absent.
-* **FR-6.2 (GitHub Actions Release Workflow):** `.github/workflows/release-ui.yml` triggers on `v*` tags and `dashboard/**` changes, cross-compiling static `memoir-ui` binaries (`darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`) with SHA-256 checksums to GitHub Releases.
+* **FR-6.2 (Versioning & Unified Release Workflow):** Releases use bare, zero-padded, 1-based CalVer tags (`YYYY.MM.N`, e.g., `2026.11.1`, validated by `^[0-9]{4}\.(0[1-9]|1[0-2])\.[1-9][0-9]*$`). `.github/workflows/release.yml` triggers on `YYYY.MM.N` tags, runs the CLI, installer, and dashboard test suites, packages `memoir-skills.tar.gz` (`memoir/` and `memoir-wiki/`), cross-compiles static `memoir-ui` binaries (`darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`) with `-ldflags` version metadata (`--version`), and publishes all assets alongside a unified `SHA256SUMS` file to GitHub Releases.
 
 ---
 
