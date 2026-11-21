@@ -1,20 +1,40 @@
 # Memoir
 
-Project-scoped memory for LLM CLI sessions (Claude Code, Codex, Antigravity). Memoir writes decisions, logs, references, feedback and a compact state snapshot as Markdown files inside your repository. You can clear a long chat whenever it starts to drift and reload a curated context with one command. It needs no MCP server, no daemon and no global config, so it works inside sandboxes that block writes to global memory.
+Local-first memory, session compaction, and cumulative knowledge management for LLM CLI sessions (Claude Code, Codex CLI, Antigravity, Pi). Memoir stores structured Markdown fragments and compiled project wikis under `~/.memoir` (or `$MEMOIR_STORE`) without polluting repository working trees, paired with a zero-dependency Go web browser (`memoir-ui`).
 
-Full requirements: [system_requirements_document_memoir_skill.md](system_requirements_document_memoir_skill.md).
+Full specifications: [system_requirements_document_memoir_skill.md](system_requirements_document_memoir_skill.md) and [SPEC.md](SPEC.md).
+
+## Components
+
+- **`skills/memoir`**: High-frequency session compaction into typed Markdown fragments (`decision`, `log`, `reference`, `feedback`, `state-current.md`) for instant `CLEAR` / `reload` cycles.
+- **`skills/memoir-wiki`**: Cumulative knowledge compiler (`ingest`, `query`, `lint`) that synthesizes fragments across clones and worktrees into interlinked `wiki/` pages with `[[wikilinks]]`.
+- **`dashboard/` (`memoir-ui`)**: Single-binary Go HTTP viewer with `embed.FS` assets, 7 color themes, `fsnotify` SSE live reload, `[[wikilink]]` & backlink navigation, decision supersession graphs, `Cmd+K` search, and safe orphan pruning.
 
 ## Install
 
-Requires Python 3.11+. [`uv`](https://docs.astral.sh/uv/) is optional.
+Requires Python 3.11+. [`uv`](https://docs.astral.sh/uv/) is optional; Go 1.23+ is only needed if building `memoir-ui` from source when no release binary matches.
 
-**Claude Code**
+**Unified installer** (installs both skills to `~/.agents/skills/`, symlinks detected agent CLIs, and installs `memoir-ui` to `~/.local/bin/memoir-ui` with SHA-256 verification):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BaankeyBihari/memoir-skill/main/scripts/install.sh | bash
+```
+
+Installer flags:
+
+| Flag | Effect |
+|---|---|
+| `--skills-only` | Install only `memoir` and `memoir-wiki` skills |
+| `--ui-only` | Install only the `memoir-ui` binary |
+| `--store <path>` | Initialize a custom store path instead of `~/.memoir` |
+| `--version <YYYY.MM.N>` | Pin a specific release tag (e.g. `2026.11.1`) |
+
+**Manual skill symlinks (Claude Code)**
 
 ```sh
 ln -s "$PWD/skills/memoir" ~/.claude/skills/memoir
+ln -s "$PWD/skills/memoir-wiki" ~/.claude/skills/memoir-wiki
 ```
-
-Restart Claude Code. `/memoir` is now available in every project.
 
 **Antigravity (`agy`)**
 
@@ -26,7 +46,7 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 
 ## Usage
 
-Inside the agent CLI:
+### Session compaction (`memoir`)
 
 | Command | Effect |
 |---|---|
@@ -48,6 +68,23 @@ The clear loop:
 ```
 
 When `[text]` is empty, the content is extracted from the recent conversation.
+
+### Knowledge compiler (`memoir-wiki`)
+
+| Command | Effect |
+|---|---|
+| `/memoir-wiki ingest` | Incrementally synthesizes new/changed fragments across clones and subpaths into the scope's shared `wiki/` (and mirrors to the repo when `meta.json` sets `"sync_to_repo": true`) |
+| `/memoir-wiki query [question]` | Reads `wiki/index.md` first, traverses `[[wikilinks]]`, answers with citations, and files reusable syntheses under `wiki/architecture/` |
+| `/memoir-wiki lint` | Audits `wiki/` for broken local or cross-wiki `[[wikilinks]]`, unindexed pages, orphans, contradictions, and stale file/command references |
+
+### Local web viewer (`memoir-ui`)
+
+```sh
+memoir-ui --port 7337 --store ~/.memoir --open
+```
+
+- Flags: `--port` (default `7337`), `--store` (defaults to `$MEMOIR_STORE` or `~/.memoir`), `--open`, `--version`.
+- Features: hierarchical Repos / Pinned Workspaces / Standalone navigation, live `fsnotify` SSE reload (`/events`), Goldmark Markdown with clickable `[[page]]` and `[[scope:page]]` links, inbound backlinks, visual decision supersession chains, `Cmd+K` full-text search with scope/type filters, 7 color themes, and confirmed pruning for orphaned clones/workspaces.
 
 ## Always on
 
@@ -81,19 +118,22 @@ For agents without shell access, run `memoir.py resume | pbcopy`, clear the chat
 
 ## Store location
 
-The default store is `~/.memoir`. Set `MEMOIR_STORE` to override its root. Run
-`memoir.py path` in your working directory to find its fragment store.
-Grant your agent write access to the store root if the CLI reports exit code 3.
-See [SPEC.md](SPEC.md) for the project and worktree layout.
+The default store is `~/.memoir`. Set `MEMOIR_STORE` to override its root. Run `memoir.py path` in your working directory to find its fragment store. Grant your agent write access to the store root if the CLI reports exit code 3. See [SPEC.md](SPEC.md) for the project, clone, worktree, pinned, and standalone layout.
 
-Legacy fragments remain in their original directories. To resume a v1 session,
-copy its active and archive fragments into the corresponding directories under
-the path printed by `memoir.py path`, checking for existing filenames before copying.
+## Releases
+
+Releases use bare, zero-padded, 1-based CalVer tags (`YYYY.MM.N`, e.g., `2026.11.1`). Each release publishes:
+
+- `memoir-skills.tar.gz` (`memoir` and `memoir-wiki`)
+- `memoir-ui-{darwin,linux}-{arm64,amd64}` static binaries
+- `SHA256SUMS` covering all release assets
 
 ## Test
 
 ```sh
 python3 test_memoir.py
+python3 scripts/test_install.py
+cd dashboard && go test -race ./...
 ```
 
 ## License
