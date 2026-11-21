@@ -21,11 +21,19 @@ import (
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/web"
 )
 
+var version = "dev"
+
 func main() {
 	port := flag.Int("port", 7337, "HTTP listen port")
 	storeFlag := flag.String("store", "", "Memoir store root (defaults to $MEMOIR_STORE or ~/.memoir)")
 	openFlag := flag.Bool("open", false, "Open the dashboard in the default browser")
+	versionFlag := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println(version)
+		return
+	}
 
 	if *port < 1 || *port > 65535 {
 		log.Fatalf("invalid --port %d: must be between 1 and 65535", *port)

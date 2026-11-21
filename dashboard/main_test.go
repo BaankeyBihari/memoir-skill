@@ -26,3 +26,12 @@ func TestResolveStoreRoot(t *testing.T) {
 		t.Fatalf("got %q, want %q", gotExplicit, wantExplicit)
 	}
 }
+
+func TestDefaultVersion(t *testing.T) {
+	if version == "" {
+		t.Fatal("expected non-empty default version")
+	}
+	if version != "dev" {
+		t.Fatalf("expected default version 'dev', got %q", version)
+	}
+}
