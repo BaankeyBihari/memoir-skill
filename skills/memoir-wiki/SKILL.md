@@ -1,6 +1,6 @@
 ---
 name: memoir-wiki
-description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use when the user asks to build, update or browse the project wiki or knowledge base, to turn accumulated memoir fragments into documentation, or to see how earlier sessions' decisions fit together. Not for recording a new decision or session state, which is the memoir skill's job.
+description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest, and when the user asks to build, update or browse the project wiki or knowledge base, to turn accumulated memoir fragments into documentation, or to see how earlier sessions' decisions fit together. Not for recording a new decision or session state, which is the memoir skill's job.
 ---
 
 # Role
@@ -24,3 +24,46 @@ If a read or write under the store is denied, show the absolute path and ask the
 
 # Schema
 Read `references/schema.md` before the first write in a session. It defines the page templates and header fields, the `index.md` catalog, the append-only `log.md` entries (`## [YYYY-MM-DD] <op> | <summary>`), the categories (`architecture/`, `decisions/`, `entities/`, `troubleshooting/`, `conventions.md`), and the local and cross-wiki link rules. Pages you write must match it, because `memoir-ui` and `lint` parse those formats.
+
+# Commands
+Confirm each page written in one line with its path relative to the wiki root. When a command finds nothing to do, say so in one line and write nothing, not even a log entry.
+
+## `/memoir-wiki ingest`
+Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: the watermark in `wiki/.ingest-state.json` (format in `references/schema.md`) makes rerunning it cheap and safe.
+
+1. List what changed. Run this with the scope root from **Wiki Root**:
+
+       python3 - "<scope root>" <<'PY'
+       import hashlib, json, re, sys
+       from pathlib import Path
+       root = Path(sys.argv[1])
+       state = root / "wiki" / ".ingest-state.json"
+       seen = json.loads(state.read_text())["fragments"] if state.is_file() else {}
+       name = re.compile(r"(\d{8}-)?(decision|log|reference|feedback)-[a-z0-9-]+\.md")
+       now = {}
+       for path in sorted(root.glob("**/paths/*/*/*.md")):
+           if path.parent.name in ("active", "archive") and name.fullmatch(path.name):
+               now[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+       for rel, digest in now.items():
+           old = seen.get(rel, {}).get("sha256")
+           if old != digest:
+               print("new" if old is None else "changed", digest, rel)
+       for rel in sorted(seen.keys() - now.keys()):
+           print("missing", "-", rel)
+       PY
+
+   It covers `clones/*/paths/*/active/` and `archive/` for a repository, and `paths/*/active/` and `archive/` for a pinned workspace. It skips files whose relative path and SHA-256 match the watermark, and it skips `state-current.md`, which is a session snapshot rather than knowledge. Each output line is `new`, `changed` or `missing`, then the hash, then the path. No lines means the wiki is current: reply "Wiki is up to date." and stop.
+2. Read each `new` and `changed` fragment. For `changed`, also read the pages its watermark entry lists. Read `index.md` and every page you're about to touch before editing it, so you merge with what's there rather than overwrite it.
+3. Synthesize each fragment into the page for its topic, using the templates in `references/schema.md`:
+   - `decision-*.md`, active or archived, goes to `decisions/<topic>.md`.
+   - `reference-*.md` goes to `entities/<name>.md`. References with the same `Target:` share a page.
+   - `log-*.md` goes to `troubleshooting/<area>.md`.
+   - `feedback-*.md` goes to `conventions.md`.
+
+   Write the fact in the page's own words and merge it into the existing page; never paste the fragment in. A wiki of raw copies is just a second, worse archive. Add `[[wikilinks]]` to related pages, and add the fragment's path to `Sources:`.
+4. Keep supersession history. A decision whose `Supersedes:` names an older decision updates that decision's page: the new choice becomes `## Current`, and the old one moves to `## History` with its date and the reason it was replaced. An archived `YYYYMMDD-decision-<slug>.md` with a `Superseded-By:` line is usually the same decision as an already-ingested `active/decision-<slug>.md` that now shows as `missing`. Treat that as a move: update `Sources:` and `Status:`, and don't create a second page. If the replacement lives on a different topic page, set `Status: superseded` and `Superseded-By: [[decisions/<page>]]`.
+5. Flag conflicts instead of resolving them silently. When a fragment contradicts a page and no supersession chain explains it, for example two worktrees that decided differently, keep both claims under a `> Contradiction:` callout and list it in the log entry. Only the user can say which one is right.
+6. For a `missing` fragment that isn't a move, keep the wiki content, because knowledge outlives a pruned clone. Drop only its watermark entry.
+7. Update `index.md` so every page appears once, with a one-line summary.
+8. Append one entry to `log.md` (create the file with `# Wiki Log` if it's absent): `## [YYYY-MM-DD] ingest | <n> fragments: <counts by type>`, with one bullet per page created or updated and one per contradiction.
+9. Write `.ingest-state.json` last. Keep the unchanged entries, set the hash and pages for each `new` and `changed` fragment, and drop each `missing` one. Writing it last means an interrupted ingest is simply redone next time and never skips a fragment.

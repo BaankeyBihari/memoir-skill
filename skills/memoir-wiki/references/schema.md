@@ -187,3 +187,24 @@ Its history is the audit trail. The file starts with `# Wiki Log`.
 
 `<op>` is `ingest`, `query` or `lint`. The summary is one line, e.g.
 `## [2026-11-21] ingest | 5 fragments: 2 decisions, 2 references, 1 feedback`.
+
+## .ingest-state.json
+
+The ingest watermark, as UTF-8 JSON. Keys are fragment paths relative to the
+scope root (`repos/<repo_id>/` or `pinned/<slug>/`), using `/` separators.
+
+```json
+{
+  "version": 1,
+  "fragments": {
+    "clones/memoir-skill--a1b2c3d4/paths/_main/active/decision-use-env-vars.md": {
+      "sha256": "<64 lowercase hex digits>",
+      "pages": ["decisions/configuration.md"]
+    }
+  }
+}
+```
+
+`pages` lists the wiki pages the fragment fed, relative to the wiki root, so a
+changed fragment can be traced to the pages that need revisiting. A missing
+file means nothing has been ingested yet.
