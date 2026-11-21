@@ -96,3 +96,48 @@ def test_pin_resolution(tmp_path, store):
     cli(root, "unpin")
     assert Path(cli(root, "path")) == store / "standalone" / workspace.name
     assert workspace.is_dir()
+
+
+def test_gc(tmp_path, store):
+    gone = tmp_path / "deleted"
+    live = tmp_path / "live"
+    gone.mkdir()
+    live.mkdir()
+    cli(live, "pin")
+    cli(gone, "pin")
+    git(gone, "init")
+    cli(gone, "init")
+    clone = Path(cli(gone, "path")).parents[1]
+    wiki = clone.parents[1] / "wiki"
+    wiki.mkdir()
+    workspace = store / "pinned" / ("deleted--" + sha8(gone))
+    live_scope = store / "pinned" / ("live--" + sha8(live))
+    gone.rename(tmp_path / "moved")
+    standalone = Path(cli(tmp_path, "path"))
+    cli(tmp_path, "init")
+    for flags in [(), ("--dry-run",), ("--prune",)]:
+        assert clone.exists() and workspace.exists()
+        out = cli(tmp_path, "gc", *flags)
+        assert str(clone) in out and str(workspace) in out
+        assert str(live_scope) not in out
+    assert not clone.exists() and not workspace.exists()
+    assert wiki.is_dir() and standalone.is_dir() and live_scope.is_dir()
+    assert cli(tmp_path, "gc", "--prune") == ""
+
+
+def test_gc_leaves_linked_and_invalid_metadata(tmp_path, store):
+    outside = tmp_path / "outside"
+    record = outside / "clones/scope/clone.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"root": str(tmp_path / "missing")}))
+    repos = store / "repos"
+    repos.mkdir(parents=True)
+    (repos / "linked").symlink_to(outside)
+    cli(tmp_path, "gc", "--prune")
+    assert record.is_file()
+    invalid = store / "pinned/bad/workspace.json"
+    invalid.parent.mkdir(parents=True)
+    invalid.write_text('{"root": ""}')
+    with pytest.raises(subprocess.CalledProcessError):
+        cli(tmp_path, "gc", "--prune")
+    assert invalid.is_file()

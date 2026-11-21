@@ -68,6 +68,7 @@ To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (
 
 | Command | Effect |
 |---|---|
+| `gc [--dry-run] [--prune]` | Reports scopes with missing source directories. Use `--prune` to delete each reported clone or pinned workspace, including its stored contents. |
 | `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. |
 | `init` | Creates `active/` and `archive/` |
 | `prompt` | Prints the absolute `active/` path for LLM injection |
