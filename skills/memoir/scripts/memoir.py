@@ -9,18 +9,18 @@ Memoir Helper CLI
 Manages directory resolution, initialization, and archiving for the Memoir skill.
 """
 
-import os
-import re
-import sys
-import shutil
-import stat
+import argparse
 import hashlib
 import json
-import argparse
+import os
+import re
+import shutil
+import stat
 import subprocess
+import sys
 import tempfile
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlsplit
 
 ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
@@ -150,8 +150,8 @@ def init_store(base_dir: Path):
 
 def generate_prompt(base_dir: Path):
     active_dir = base_dir / "active"
-    print(f"SYSTEM CONTEXT INJECTION:")
-    print(f"Your Memoir store is active. You must write all files strictly to this absolute path:")
+    print("SYSTEM CONTEXT INJECTION:")
+    print("Your Memoir store is active. You must write all files strictly to this absolute path:")
     print(f"{active_dir.absolute()}")
 
 def find_superseded(base_dir: Path) -> dict[str, str]:
@@ -199,7 +199,7 @@ def archive_files(base_dir: Path, target_files: list[str]):
         print("[Memoir] Error: Active directory not found. Run init first.")
         sys.exit(1)
 
-    today = datetime.now().strftime("%Y%m%d")
+    today = datetime.now().astimezone().strftime("%Y%m%d")
     archived_count = 0
     failed = False
 

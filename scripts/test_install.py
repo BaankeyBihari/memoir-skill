@@ -330,6 +330,7 @@ class TestInstaller(unittest.TestCase):
                     env={**os.environ, "HOME": str(tmp_path / "home")},
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 self.assertEqual(res.returncode, 3)
                 self.assertIn("No write access", res.stderr)
@@ -419,6 +420,7 @@ class TestInstaller(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertNotEqual(res.returncode, 0)
             self.assertIn("Checksum mismatch", res.stderr)
@@ -431,6 +433,7 @@ class TestInstaller(unittest.TestCase):
                 env={**os.environ, "HOME": tmp},
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertEqual(res.returncode, 2)
 

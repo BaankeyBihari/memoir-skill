@@ -1,0 +1,17 @@
+[files]
+extend-exclude = [
+  ".claude/**",
+  ".agents/**",
+  ".pytest_cache/**",
+  "dist/**",
+  "memoir-workspace/**",
+  "dashboard/go.sum",
+]
+
+[default.extend-words]
+BaankeyBihari = "BaankeyBihari"
+agy = "agy"
+summar = "summar"
+
+[default.extend-identifiers]
+PnP = "PnP"

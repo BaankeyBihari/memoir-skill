@@ -201,7 +201,7 @@ func TestServerSSEStreamAndClose(t *testing.T) {
 
 	srv := NewServer(store, 7337, hub, nil)
 	pr, pw := io.Pipe()
-	defer pr.Close()
+	defer func() { _ = pr.Close() }()
 
 	rw := newSSEPipeWriter(pw)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -211,7 +211,7 @@ func TestServerSSEStreamAndClose(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 		srv.Handler().ServeHTTP(rw, req)
 	}()
 
