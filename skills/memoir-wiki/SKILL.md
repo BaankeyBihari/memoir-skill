@@ -1,6 +1,6 @@
 ---
 name: memoir-wiki
-description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest, and when the user asks to build, update or browse the project wiki or knowledge base, to turn accumulated memoir fragments into documentation, or to see how earlier sessions' decisions fit together. Not for recording a new decision or session state, which is the memoir skill's job.
+description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, or to see how earlier sessions' decisions fit together. Not for recording a new decision or session state, which is the memoir skill's job.
 ---
 
 # Role
@@ -67,3 +67,12 @@ Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: th
 7. Update `index.md` so every page appears once, with a one-line summary.
 8. Append one entry to `log.md` (create the file with `# Wiki Log` if it's absent): `## [YYYY-MM-DD] ingest | <n> fragments: <counts by type>`, with one bullet per page created or updated and one per contradiction.
 9. Write `.ingest-state.json` last. Keep the unchanged entries, set the hash and pages for each `new` and `changed` fragment, and drop each `missing` one. Writing it last means an interrupted ingest is simply redone next time and never skips a fragment.
+
+## `/memoir-wiki query [question]`
+Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
+
+1. Read `wiki/index.md` first. It's the map, and reading it first stops you from grepping the store or opening fragments. If the wiki or its index doesn't exist, say so and suggest `/memoir-wiki ingest`.
+2. Pick the 2 to 4 pages whose summaries best match the question. Read them, then follow their `[[wikilinks]]` only while the next page still adds something. A cross-wiki link `[[<scope>:<page-path>]]` may be followed read-only, resolved as in `references/schema.md`.
+3. Answer from what those pages say, citing each claim's page as `[[page-path]]`. Name any open `Contradiction:` callout you relied on. When the wiki doesn't cover the question, say that plainly. Don't fill the gap from general knowledge, because the user asked what this project decided.
+4. File the answer back when it combined two or more pages into something a later session would ask again, such as how a subsystem fits together or why a chain of decisions went the way it did. Write it to `architecture/<topic>.md`, using the architecture template with the pages it drew on in `Sources:`. If a matching page already exists, update it. A single-page lookup or a one-off answer is not worth filing.
+5. When you file a page, add it to `index.md`, then append `## [YYYY-MM-DD] query | <question in under 80 characters>` to `log.md` with a `filed [[architecture/<topic>]]` bullet. Write only to the current scope's wiki, even when the answer used a cross-wiki page.
