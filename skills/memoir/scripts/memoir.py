@@ -14,17 +14,80 @@ import re
 import sys
 import shutil
 import hashlib
+import json
 import argparse
 import subprocess
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
 SUPERSEDED_RE = re.compile(r"decision-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
 
 def store_root() -> Path:
     return Path(os.environ.get("MEMOIR_STORE") or "~/.memoir").expanduser().resolve()
+
+
+def scope_id(root: Path, identity: Path) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-") or "root"
+    digest = hashlib.sha256(str(identity).encode()).hexdigest()[:8]
+    return f"{slug}--{digest}"
+
+
+def git_output(*args: str) -> str:
+    try:
+        return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).rstrip("\n")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def remote_id(remote: str, main_root: Path) -> str:
+    if "://" in remote:
+        url = urlsplit(remote)
+        host = url.hostname or ""
+        authority = f"{host}__{url.port}" if url.port else host
+        value = f"{authority}/{url.path.lstrip('/')}"
+    elif re.match(r"^(?:[^/@]+@)?[^/:]+:", remote):
+        host, path = remote.split(":", 1)
+        value = f"{host.split('@')[-1]}/{path.lstrip('/')}"
+    else:
+        value = str((main_root / remote).resolve())
+    key = re.sub(r"[:/]+", "__", value.strip("/").lower().removesuffix(".git"))
+    if key in {"", ".", ".."}:
+        raise ValueError("Invalid origin identity")
+    return key
+
+
+def record_scope(record: Path, root: Path) -> None:
+    record.parent.mkdir(parents=True, exist_ok=True)
+    data = {"root": str(root), "last_seen": datetime.now(timezone.utc).isoformat()}
+    atomic_write(record, json.dumps(data) + "\n")
+
+
+def resolve_store(store: Path, record: bool) -> Path:
+    top = git_output("rev-parse", "--show-toplevel")
+    if not top:
+        return store
+    toplevel = Path(top).resolve()
+    common_path = git_output("rev-parse", "--git-common-dir")
+    if not common_path:
+        raise ValueError("Cannot resolve Git common directory")
+    common = Path(common_path).resolve()
+    root = common.parent
+    clone_id = scope_id(root, common)
+    remote = git_output("remote", "get-url", "origin")
+    repo_id = remote_id(remote, root) if remote else f"local__{clone_id}"
+    clone = store / "repos" / repo_id / "clones" / clone_id
+    if record:
+        record_scope(clone / "clone.json", root)
+    if toplevel == root:
+        key = "_main"
+    elif toplevel.is_relative_to(root):
+        key = "__".join(toplevel.relative_to(root).parts)
+    else:
+        key = toplevel.name
+    return clone / "paths" / key
 
 
 def check_access(base_dir: Path) -> None:
@@ -155,7 +218,7 @@ def main():
     subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
 
     args = parser.parse_args()
-    base_dir = store_root()
+    base_dir = resolve_store(store_root(), args.command != "path")
     if args.command != "path":
         check_access(base_dir)
 
@@ -177,4 +240,11 @@ def main():
         generate_resume(base_dir)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except OSError as error:
+        print(f"[Memoir] No write access to {error.filename or store_root()} ({error.strerror})", file=sys.stderr)
+        sys.exit(3)
+    except ValueError as error:
+        print(f"[Memoir] {error}", file=sys.stderr)
+        sys.exit(1)
