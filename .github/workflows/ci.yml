@@ -18,6 +18,8 @@ jobs:
           python-version: "3.11"
       - name: Test CLI
         run: python test_memoir.py
+      - name: Test installer
+        run: python scripts/test_install.py
       - name: Validate skill
         run: |
           python - <<'PY'
@@ -36,3 +38,20 @@ jobs:
           assert Path("skills/memoir-wiki/references/schema.md").is_file(), "memoir-wiki schema missing"
           print("skill ok")
           PY
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: dashboard/go.mod
+          cache-dependency-path: dashboard/go.sum
+      - name: Test dashboard
+        working-directory: dashboard
+        run: go test -race ./...
+      - name: Build dashboard
+        working-directory: dashboard
+        env:
+          CGO_ENABLED: "0"
+        run: go build -o /dev/null .

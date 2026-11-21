@@ -2,7 +2,7 @@
 
 **Repository:** `BaankeyBihari/memoir-skill`  
 **Status:** Approved for Implementation  
-**Scope:** Monorepo restructure, centralized `~/.memoir` store migration (`memoir`), Karpathy-style cumulative knowledge compiler (`memoir-wiki`), local Go web browser (`memoir-ui`), and unified `install.sh` installer.
+**Scope:** Monorepo restructure, centralized `~/.memoir` store migration (`memoir`), Karpathy-style cumulative knowledge compiler (`memoir-wiki`), local Go web browser (`memoir-ui`), and unified `scripts/install.sh` installer.
 
 ---
 
@@ -33,7 +33,9 @@ memoir-skill/
 ├── README.md
 ├── SPEC.md                                        # Canonical ~/.memoir filesystem & schema contract
 ├── system_requirements_document_memoir_skill.md   # This SRD (v2.0)
-├── install.sh                                     # Unified curl-able installer (skills + Go binary)
+├── scripts/
+│   ├── install.sh                                 # Unified curl-able installer (skills + Go binary)
+│   └── test_install.py                            # Stdlib installer checks
 ├── .github/
 │   └── workflows/
 │       └── release-ui.yml                         # Cross-platform Go binary release workflow
@@ -210,7 +212,7 @@ All v1 fragment schemas and slash commands remain unchanged:
 
 ## 7. Installer & Release Requirements
 
-* **FR-6.1 (`install.sh`):** Idempotent Bash installer supporting `--skills-only`, `--ui-only`, and `--store <path>`:
+* **FR-6.1 (`scripts/install.sh`):** Idempotent Bash installer supporting `--skills-only`, `--ui-only`, and `--store <path>`:
   1. Copy `skills/memoir` and `skills/memoir-wiki` into `~/.agents/skills/`.
   2. Symlink both skills into `~/.claude/skills/`, `~/.codex/skills/`, `~/.pi/agent/skills/`, and `~/.gemini/antigravity/skills/` when those parent directories exist.
   3. Download the matching OS/arch `memoir-ui` binary from GitHub Releases into `~/.local/bin/memoir-ui` (falling back to `go install ./dashboard` if Go is installed locally).
