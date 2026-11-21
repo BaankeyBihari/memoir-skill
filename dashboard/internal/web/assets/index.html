@@ -19,7 +19,7 @@
 <body>
   <header class="topbar">
     <div class="brand-bar">
-      <span class="brand">memoir-ui</span>
+      <a href="#" class="brand" onclick="clearSelection(event)">memoir-ui</a>
       <span id="storePathBadge" class="store-pill mono" title="Active Memoir store root">loading...</span>
     </div>
     <div class="header-actions">
@@ -36,76 +36,95 @@
         <option value="sky-light">Sky Light</option>
         <option value="zinc-light">Zinc Light</option>
       </select>
-      <button id="refreshBtn" type="button" onclick="refreshState()">&#x21bb; Refresh</button>
+      <button id="refreshBtn" type="button" onclick="refreshAll()">&#x21bb; Refresh</button>
     </div>
   </header>
 
   <div class="app-layout">
     <aside id="sidebar" class="sidebar" aria-label="Store navigation">
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Store</div>
-        <div class="sidebar-card">
-          <div class="kv-row">
-            <span class="kv-label">Status</span>
-            <span id="storeExistsBadge" class="badge">checking</span>
-          </div>
-          <div class="kv-row">
-            <span class="kv-label">Port</span>
-            <span id="serverPortValue" class="mono">-</span>
-          </div>
-          <p class="sidebar-note">
-            Recursive <code class="mono">fsnotify</code> watcher is listening for fragment and wiki updates.
-          </p>
+      <div class="sidebar-toolbar">
+        <span class="sidebar-heading">Store Explorer</span>
+        <div class="sidebar-toolbar-btns">
+          <button type="button" class="mini-btn" onclick="setAllExpanded(true)" title="Expand all sections">Expand</button>
+          <button type="button" class="mini-btn" onclick="setAllExpanded(false)" title="Collapse all sections">Collapse</button>
         </div>
       </div>
+      <nav id="sidebarTree" class="tree-root"></nav>
     </aside>
 
     <main id="mainContent" class="main-content">
-      <section class="card">
-        <div class="card-header">
-          <div>
-            <h1>Memoir Local Dashboard</h1>
-            <p class="subtitle">Zero-dependency embedded viewer with live SSE reload over <code class="mono">/events</code>.</p>
+      <div id="overviewView">
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h1>Memoir Store Overview</h1>
+              <p class="subtitle">Select any wiki page or session fragment from the sidebar to inspect it.</p>
+            </div>
           </div>
-          <button type="button" class="primary" onclick="refreshState()">Check Health</button>
-        </div>
-        <div class="status-grid">
-          <div class="stat-box">
-            <div class="stat-label">Store Root</div>
-            <div id="heroStorePath" class="stat-value mono">-</div>
+          <div class="status-grid">
+            <div class="stat-box">
+              <div class="stat-label">Repositories</div>
+              <div id="statReposCount" class="stat-value">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Pinned Workspaces</div>
+              <div id="statPinnedCount" class="stat-value">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Standalone</div>
+              <div id="statStandaloneCount" class="stat-value">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Live Stream</div>
+              <div id="heroStreamState" class="stat-value">Connecting...</div>
+            </div>
           </div>
-          <div class="stat-box">
-            <div class="stat-label">Live Stream</div>
-            <div id="heroStreamState" class="stat-value">Connecting...</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Events Received</div>
-            <div id="heroEventCount" class="stat-value">0</div>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="card">
-        <div class="card-header">
-          <h2>Live Store Events</h2>
-          <button type="button" onclick="clearEventLog()">Clear Log</button>
-        </div>
-        <div id="eventLogEmpty" class="empty-note">
-          Waiting for filesystem activity inside the Memoir store...
-        </div>
-        <div id="eventLogWrap" class="table-wrap hidden">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Op</th>
-                <th>Store Path</th>
-              </tr>
-            </thead>
-            <tbody id="eventLogBody"></tbody>
-          </table>
-        </div>
-      </section>
+        <section id="emptyStoreCard" class="card hidden">
+          <h2>Store Is Empty</h2>
+          <p class="subtitle">
+            No repositories, pinned workspaces, or standalone sessions were found under
+            <code id="emptyStorePath" class="mono"></code>.
+          </p>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>Recent Live Events</h2>
+            <button type="button" onclick="clearEventLog()">Clear</button>
+          </div>
+          <div id="eventLogEmpty" class="empty-note">
+            Watching store for file updates via <code class="mono">/events</code>...
+          </div>
+          <div id="eventLogWrap" class="table-wrap hidden">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Op</th>
+                  <th>Store Path</th>
+                </tr>
+              </thead>
+              <tbody id="eventLogBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <article id="documentView" class="doc-article hidden">
+        <div id="docBreadcrumb" class="breadcrumb mono"></div>
+        <header class="doc-header">
+          <div class="doc-title-row">
+            <h1 id="docTitle" class="doc-title"></h1>
+            <div id="docKindBadges" class="doc-kind-badges"></div>
+          </div>
+          <div id="docRelPath" class="doc-rel-path mono"></div>
+        </header>
+        <section class="doc-surface">
+          <pre id="docRawBody" class="raw-markdown"></pre>
+        </section>
+      </article>
     </main>
   </div>
 

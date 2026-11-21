@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -96,6 +98,69 @@ func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
 	}
 	if health["status"] != "ok" || health["store_exists"] != true {
 		t.Fatalf("unexpected health payload: %#v", health)
+	}
+}
+
+func TestServerTreeAndFileEndpoints(t *testing.T) {
+	storeRoot := t.TempDir()
+	wikiFile := filepath.Join(storeRoot, "repos", "github.com__acme__app", "wiki", "index.md")
+	if err := os.MkdirAll(filepath.Dir(wikiFile), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(wikiFile, []byte("# Wiki Index\nUpdated: 2026-11-21\n"), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	hub := NewHub()
+	defer hub.Close()
+	srv := NewServer(storeRoot, 7337, hub)
+	h := srv.Handler()
+
+	// GET /api/tree
+	tReq := httptest.NewRequest(http.MethodGet, "/api/tree", nil)
+	tRec := httptest.NewRecorder()
+	h.ServeHTTP(tRec, tReq)
+	if tRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/tree status = %d, want 200", tRec.Code)
+	}
+	var tree map[string]any
+	if err := json.Unmarshal(tRec.Body.Bytes(), &tree); err != nil {
+		t.Fatalf("decode tree: %v", err)
+	}
+	repos, ok := tree["repos"].([]any)
+	if !ok || len(repos) != 1 {
+		t.Fatalf("expected 1 repo in tree, got %#v", tree["repos"])
+	}
+
+	// GET /api/file valid
+	fReq := httptest.NewRequest(http.MethodGet, "/api/file?path=repos/github.com__acme__app/wiki/index.md", nil)
+	fRec := httptest.NewRecorder()
+	h.ServeHTTP(fRec, fReq)
+	if fRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/file status = %d, want 200", fRec.Code)
+	}
+	var fileResp map[string]any
+	if err := json.Unmarshal(fRec.Body.Bytes(), &fileResp); err != nil {
+		t.Fatalf("decode file: %v", err)
+	}
+	if fileResp["title"] != "Wiki Index" || fileResp["kind"] != "wiki" {
+		t.Fatalf("unexpected file payload: %#v", fileResp)
+	}
+
+	// GET /api/file invalid traversal
+	badReq := httptest.NewRequest(http.MethodGet, "/api/file?path=../etc/passwd", nil)
+	badRec := httptest.NewRecorder()
+	h.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("GET /api/file traversal status = %d, want 400", badRec.Code)
+	}
+
+	// GET /api/file missing
+	missReq := httptest.NewRequest(http.MethodGet, "/api/file?path=repos/github.com__acme__app/wiki/missing.md", nil)
+	missRec := httptest.NewRecorder()
+	h.ServeHTTP(missRec, missReq)
+	if missRec.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/file missing status = %d, want 404", missRec.Code)
 	}
 }
 

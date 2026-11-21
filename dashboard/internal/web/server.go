@@ -3,19 +3,23 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
+
+	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
 )
 
 //go:embed assets/*
 var assetsFS embed.FS
 
-// Server serves the embedded dashboard UI and SSE live-reload endpoints.
+// Server serves the embedded dashboard UI, store tree/file APIs, and SSE live-reload endpoints.
 type Server struct {
 	StoreRoot string
 	Port      int
@@ -47,6 +51,8 @@ func (s *Server) Handler() http.Handler {
 	}))
 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/tree", s.handleTree)
+	mux.HandleFunc("GET /api/file", s.handleFile)
 	mux.HandleFunc("GET /events", s.handleEvents)
 
 	return s.localhostGuard(mux)
@@ -103,6 +109,52 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"store":        s.StoreRoot,
 		"store_exists": exists,
 		"port":         s.Port,
+	})
+}
+
+func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
+	tree, err := store.Scan(s.StoreRoot)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, tree)
+}
+
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	resolved, err := store.ResolveSafeFile(s.StoreRoot, relPath)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrInvalidPath):
+			writeJSONError(w, http.StatusBadRequest, "invalid file path")
+		case errors.Is(err, store.ErrNotFound):
+			writeJSONError(w, http.StatusNotFound, "file not found")
+		default:
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	raw, err := os.ReadFile(resolved)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSONError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	cleanRel := path.Clean(relPath)
+	kind, archived := store.ClassifyFile(cleanRel)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":     cleanRel,
+		"name":     path.Base(cleanRel),
+		"title":    store.ExtractTitle(resolved),
+		"kind":     kind,
+		"archived": archived,
+		"raw":      string(raw),
 	})
 }
 
