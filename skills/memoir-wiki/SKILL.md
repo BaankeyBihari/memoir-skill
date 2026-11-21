@@ -1,6 +1,6 @@
 ---
 name: memoir-wiki
-description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, or to see how earlier sessions' decisions fit together. Not for recording a new decision or session state, which is the memoir skill's job.
+description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query|lint, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, to see how earlier sessions' decisions fit together, or to audit the wiki for broken links, orphan pages, contradictions or stale file references. Not for recording a new decision or session state, which is the memoir skill's job.
 ---
 
 # Role
@@ -26,7 +26,7 @@ If a read or write under the store is denied, show the absolute path and ask the
 Read `references/schema.md` before the first write in a session. It defines the page templates and header fields, the `index.md` catalog, the append-only `log.md` entries (`## [YYYY-MM-DD] <op> | <summary>`), the categories (`architecture/`, `decisions/`, `entities/`, `troubleshooting/`, `conventions.md`), and the local and cross-wiki link rules. Pages you write must match it, because `memoir-ui` and `lint` parse those formats.
 
 # Commands
-Confirm each page written in one line with its path relative to the wiki root. When a command finds nothing to do, say so in one line and write nothing, not even a log entry.
+Confirm each page written in one line with its path relative to the wiki root. When ingest or query has nothing to do, say so in one line and write nothing, not even a log entry. Lint is the exception: it logs a clean result too.
 
 ## `/memoir-wiki ingest`
 Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: the watermark in `wiki/.ingest-state.json` (format in `references/schema.md`) makes rerunning it cheap and safe.
@@ -76,3 +76,48 @@ Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
 3. Answer from what those pages say, citing each claim's page as `[[page-path]]`. Name any open `Contradiction:` callout you relied on. When the wiki doesn't cover the question, say that plainly. Don't fill the gap from general knowledge, because the user asked what this project decided.
 4. File the answer back when it combined two or more pages into something a later session would ask again, such as how a subsystem fits together or why a chain of decisions went the way it did. Write it to `architecture/<topic>.md`, using the architecture template with the pages it drew on in `Sources:`. If a matching page already exists, update it. A single-page lookup or a one-off answer is not worth filing.
 5. When you file a page, add it to `index.md`, then append `## [YYYY-MM-DD] query | <question in under 80 characters>` to `log.md` with a `filed [[architecture/<topic>]]` bullet. Write only to the current scope's wiki, even when the answer used a cross-wiki page.
+
+## `/memoir-wiki lint`
+Audit the wiki for structural rot and drift from the code (FR-4.4). Lint reports problems and edits nothing except `log.md`. Fixes belong to the user's call or to a later ingest.
+
+1. Check the links. Run this with the wiki root and the store root (the part of the `memoir.py path` output before `repos/` or `pinned/`):
+
+       python3 - "<wiki root>" "<store root>" <<'PY'
+       import re, sys
+       from pathlib import Path
+       wiki, store = Path(sys.argv[1]), Path(sys.argv[2])
+       link = re.compile(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]")
+       pages = {p.relative_to(wiki).with_suffix("").as_posix() for p in wiki.rglob("*.md")}
+       inbound = dict.fromkeys(pages, 0)
+       for page in sorted(pages - {"log"}):
+           for target in map(str.strip, link.findall((wiki / f"{page}.md").read_text())):
+               scope, sep, rest = target.partition(":")
+               if sep:
+                   if not any((store / kind / scope / "wiki" / f"{rest}.md").is_file() for kind in ("repos", "pinned")):
+                       print(f"broken-cross {page} -> [[{target}]]")
+               elif target not in pages:
+                   print(f"broken {page} -> [[{target}]]")
+               elif page != "index" and target != page:
+                   inbound[target] += 1
+       indexed = set(map(str.strip, link.findall((wiki / "index.md").read_text()))) if "index" in pages else set()
+       for page in sorted(pages - {"index", "log"}):
+           if page not in indexed:
+               print(f"unindexed {page}")
+           if not inbound[page]:
+               print(f"orphan {page}")
+       PY
+
+   It prints one finding per line:
+   - `broken`: a local link to a page that doesn't exist.
+   - `broken-cross`: a `[[<scope>:<page>]]` whose target is missing in both `repos/` and `pinned/`.
+   - `unindexed`: a page that `index.md` doesn't list.
+   - `orphan`: a page with no inbound local link from any page other than `index.md` and `log.md`.
+
+   Cross-wiki links never count toward orphan status. `log.md` is skipped entirely, because its history may name pages that were later renamed.
+2. Look for contradictions. Read the pages and list claims that disagree across pages, such as two current decisions on one topic, an entity whose `Target:` differs between pages, or a convention that a decision overrides. Include unresolved `> Contradiction:` callouts as well.
+3. Check for staleness against the active checkout. For a repository, that is `git rev-parse --show-toplevel` from the current directory. For a pinned workspace, it is the `root` in `<scope root>/workspace.json`.
+   - For each file path a page mentions (in backticks or on a `Target:` line), report it if it no longer exists. Resolve relative paths against the checkout.
+   - For each command, check that its script or binary exists (`command -v` for tools on `PATH`), and that the subcommand or flag still appears in that script's source. Don't run the commands to find out, because a lint must have no side effects.
+   - The wiki is shared across clones and branches, so a path missing here may exist on another branch. Report it as `missing in <checkout>` rather than as wrong.
+4. Report the findings to the user, grouped by kind, each with its page. Then append `## [YYYY-MM-DD] lint | <n> findings` to `log.md` with one bullet per finding. When there are no findings, log `## [YYYY-MM-DD] lint | 0 findings` so the clean audit is on record.
+5. Offer to fix the mechanical findings (missing index entries, links with an obvious target). Leave contradictions and stale claims to the user. Never edit another scope's wiki, even when a cross-wiki link into it is broken.
