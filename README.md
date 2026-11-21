@@ -68,6 +68,7 @@ To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (
 
 | Command | Effect |
 |---|---|
+| `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. |
 | `init` | Creates `active/` and `archive/` |
 | `prompt` | Prints the absolute `active/` path for LLM injection |
 | `path` | Prints the resolved store directory |
