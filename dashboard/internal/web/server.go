@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,19 +21,21 @@ import (
 //go:embed assets/*
 var assetsFS embed.FS
 
-// Server serves the embedded dashboard UI, store tree/file APIs, and SSE live-reload endpoints.
+// Server serves the embedded dashboard UI, store tree/file/search/GC APIs, and SSE live-reload endpoints.
 type Server struct {
 	StoreRoot string
 	Port      int
 	Hub       *Hub
+	Search    *store.SearchIndex
 }
 
 // NewServer constructs a dashboard HTTP server.
-func NewServer(storeRoot string, port int, hub *Hub) *Server {
+func NewServer(storeRoot string, port int, hub *Hub, search *store.SearchIndex) *Server {
 	return &Server{
 		StoreRoot: storeRoot,
 		Port:      port,
 		Hub:       hub,
+		Search:    search,
 	}
 }
 
@@ -54,6 +57,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/tree", s.handleTree)
 	mux.HandleFunc("GET /api/file", s.handleFile)
+	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("GET /api/gc", s.handleGCList)
+	mux.HandleFunc("POST /api/gc/prune", s.handleGCPrune)
 	mux.HandleFunc("GET /events", s.handleEvents)
 
 	return s.localhostGuard(mux)
@@ -169,6 +175,91 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		"sources":        doc.Sources,
 		"backlinks":      doc.Backlinks,
 		"decision_chain": doc.DecisionChain,
+	})
+}
+
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	docType := strings.TrimSpace(r.URL.Query().Get("type"))
+	limit := 50
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	idx := s.Search
+	if idx == nil {
+		idx = store.NewSearchIndex(s.StoreRoot)
+		_ = idx.Rebuild()
+	}
+
+	results := idx.Query(q, scope, docType, limit)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":   q,
+		"scope":   scope,
+		"type":    docType,
+		"total":   len(results),
+		"results": results,
+	})
+}
+
+func (s *Server) handleGCList(w http.ResponseWriter, r *http.Request) {
+	orphans, err := store.ListOrphans(s.StoreRoot)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"orphans": orphans,
+	})
+}
+
+func (s *Server) handleGCPrune(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path    string `json:"path"`
+		Confirm bool   `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.Path = strings.TrimSpace(req.Path)
+	if !req.Confirm || req.Path == "" {
+		writeJSONError(w, http.StatusBadRequest, "path and confirm=true are required")
+		return
+	}
+
+	if err := store.PruneOrphan(s.StoreRoot, req.Path); err != nil {
+		switch {
+		case errors.Is(err, store.ErrInvalidPath):
+			writeJSONError(w, http.StatusBadRequest, "invalid orphan path")
+		case errors.Is(err, store.ErrNotFound):
+			writeJSONError(w, http.StatusNotFound, "orphan path not found")
+		case errors.Is(err, store.ErrNotOrphaned):
+			writeJSONError(w, http.StatusConflict, err.Error())
+		default:
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	if s.Search != nil {
+		_ = s.Search.Rebuild()
+	}
+	if s.Hub != nil {
+		s.Hub.Broadcast(Event{
+			Type:      "change",
+			Op:        "remove",
+			Path:      req.Path,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "pruned",
+		"path":   req.Path,
 	})
 }
 

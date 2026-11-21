@@ -31,6 +31,7 @@ type CloneScope struct {
 	RelPath  string      `json:"rel_path"`
 	Root     string      `json:"root,omitempty"`
 	LastSeen string      `json:"last_seen,omitempty"`
+	Orphaned bool        `json:"orphaned,omitempty"`
 	Paths    []PathScope `json:"paths"`
 }
 
@@ -41,6 +42,7 @@ type PinnedScope struct {
 	RelPath  string      `json:"rel_path"`
 	Root     string      `json:"root,omitempty"`
 	LastSeen string      `json:"last_seen,omitempty"`
+	Orphaned bool        `json:"orphaned,omitempty"`
 	Wiki     *WikiTree   `json:"wiki,omitempty"`
 	Paths    []PathScope `json:"paths"`
 }

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
 )
 
 type ssePipeWriter struct {
@@ -51,7 +53,7 @@ func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
 	hub := NewHub()
 	defer hub.Close()
 
-	srv := NewServer(store, 7337, hub)
+	srv := NewServer(store, 7337, hub, nil)
 	h := srv.Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -117,7 +119,7 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 
 	hub := NewHub()
 	defer hub.Close()
-	srv := NewServer(storeRoot, 7337, hub)
+	srv := NewServer(storeRoot, 7337, hub, nil)
 	h := srv.Handler()
 
 	// GET /api/tree
@@ -197,7 +199,7 @@ func TestServerSSEStreamAndClose(t *testing.T) {
 	hub := NewHub()
 	defer hub.Close()
 
-	srv := NewServer(store, 7337, hub)
+	srv := NewServer(store, 7337, hub, nil)
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -246,7 +248,7 @@ func TestLocalhostGuardRejectsForeignOrigin(t *testing.T) {
 	hub := NewHub()
 	defer hub.Close()
 
-	srv := NewServer(t.TempDir(), 7337, hub)
+	srv := NewServer(t.TempDir(), 7337, hub, nil)
 	h := srv.Handler()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/health", nil)
@@ -264,6 +266,116 @@ func TestLocalhostGuardRejectsForeignOrigin(t *testing.T) {
 	h.ServeHTTP(okRec, okReq)
 	if okRec.Code == http.StatusForbidden {
 		t.Fatalf("POST with localhost origin should not return 403")
+	}
+}
+
+func TestServerSearchAndGCPruneEndpoints(t *testing.T) {
+	storeRoot := t.TempDir()
+	healthyDir := t.TempDir()
+	missingDir := filepath.Join(t.TempDir(), "gone")
+
+	repoBase := filepath.Join(storeRoot, "repos", "github.com__acme__app")
+	if err := os.MkdirAll(filepath.Join(repoBase, "wiki"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoBase, "wiki", "index.md"), []byte("# App Wiki\nUpdated: 2026-11-21\n"), 0o644); err != nil {
+		t.Fatalf("write wiki: %v", err)
+	}
+
+	healthyClone := filepath.Join(repoBase, "clones", "app--11111111")
+	if err := os.MkdirAll(filepath.Join(healthyClone, "paths", "_main", "active"), 0o755); err != nil {
+		t.Fatalf("mkdir healthy: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(healthyClone, "clone.json"), []byte(`{"root":"`+healthyDir+`"}`), 0o644)
+	_ = os.WriteFile(filepath.Join(healthyClone, "paths", "_main", "active", "decision-keep.md"), []byte("# Keep\nDecision: keep live\n"), 0o644)
+
+	orphanClone := filepath.Join(repoBase, "clones", "old--22222222")
+	if err := os.MkdirAll(filepath.Join(orphanClone, "paths", "_main", "active"), 0o755); err != nil {
+		t.Fatalf("mkdir orphan: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(orphanClone, "clone.json"), []byte(`{"root":"`+missingDir+`"}`), 0o644)
+	_ = os.WriteFile(filepath.Join(orphanClone, "paths", "_main", "active", "decision-stale.md"), []byte("# Stale\nDecision: remove stale token\n"), 0o644)
+
+	idx := store.NewSearchIndex(storeRoot)
+	if err := idx.Rebuild(); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	hub := NewHub()
+	defer hub.Close()
+	srv := NewServer(storeRoot, 7337, hub, idx)
+	h := srv.Handler()
+
+	// Search query with scope & type filters.
+	sReq := httptest.NewRequest(http.MethodGet, "/api/search?q=stale&scope=repo&type=decision", nil)
+	sRec := httptest.NewRecorder()
+	h.ServeHTTP(sRec, sReq)
+	if sRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/search status = %d", sRec.Code)
+	}
+	var sResp map[string]any
+	_ = json.Unmarshal(sRec.Body.Bytes(), &sResp)
+	if int(sResp["total"].(float64)) != 1 {
+		t.Fatalf("expected 1 search result, got %#v", sResp)
+	}
+
+	// GET /api/gc lists only the orphan clone.
+	gReq := httptest.NewRequest(http.MethodGet, "/api/gc", nil)
+	gRec := httptest.NewRecorder()
+	h.ServeHTTP(gRec, gReq)
+	if gRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/gc status = %d", gRec.Code)
+	}
+	var gResp struct {
+		Orphans []store.Orphan `json:"orphans"`
+	}
+	_ = json.Unmarshal(gRec.Body.Bytes(), &gResp)
+	if len(gResp.Orphans) != 1 || gResp.Orphans[0].RelPath != "repos/github.com__acme__app/clones/old--22222222" {
+		t.Fatalf("unexpected orphans: %+v", gResp.Orphans)
+	}
+
+	// POST /api/gc/prune requires confirm=true.
+	noConfirm := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":false}`))
+	noConfirmRec := httptest.NewRecorder()
+	h.ServeHTTP(noConfirmRec, noConfirm)
+	if noConfirmRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without confirm=true, got %d", noConfirmRec.Code)
+	}
+
+	// POST /api/gc/prune blocks foreign Origin.
+	foreign := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":true}`))
+	foreign.Header.Set("Origin", "https://evil.example")
+	foreignRec := httptest.NewRecorder()
+	h.ServeHTTP(foreignRec, foreign)
+	if foreignRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for foreign origin, got %d", foreignRec.Code)
+	}
+
+	// POST /api/gc/prune rejects healthy clone with 409 Conflict.
+	healthyReq := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/app--11111111","confirm":true}`))
+	healthyRec := httptest.NewRecorder()
+	h.ServeHTTP(healthyRec, healthyReq)
+	if healthyRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for healthy clone, got %d", healthyRec.Code)
+	}
+
+	// Valid confirmed prune deletes orphan and refreshes search index.
+	okReq := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":true}`))
+	okReq.Header.Set("Origin", "http://127.0.0.1:7337")
+	okRec := httptest.NewRecorder()
+	h.ServeHTTP(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on valid prune, got %d (%s)", okRec.Code, okRec.Body.String())
+	}
+
+	// Search index should no longer return pruned clone's decision.
+	afterReq := httptest.NewRequest(http.MethodGet, "/api/search?q=stale", nil)
+	afterRec := httptest.NewRecorder()
+	h.ServeHTTP(afterRec, afterReq)
+	var afterResp map[string]any
+	_ = json.Unmarshal(afterRec.Body.Bytes(), &afterResp)
+	if int(afterResp["total"].(float64)) != 0 {
+		t.Fatalf("expected pruned document removed from search index, got %#v", afterResp)
 	}
 }
 

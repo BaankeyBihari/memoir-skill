@@ -4,9 +4,16 @@
   const knownDefaultExpanded = new Set();
   const changeListeners = new Set();
   let currentTree = null;
+  let currentOrphans = [];
   let activeFilePath = '';
   let docViewMode = 'rendered';
   let eventSource = null;
+  let searchScopeFilter = '';
+  let searchTypeFilter = '';
+  let searchResultsList = [];
+  let searchSelectedIdx = 0;
+  let searchTimer = null;
+  let pendingPruneTarget = null;
 
   function applyTheme(theme) {
     const allowed = new Set([
@@ -352,7 +359,7 @@
           function (repoEl) {
             appendWikiBranch(repoEl, 'repo:' + repo.id, repo.wiki);
             (repo.clones || []).forEach(function (clone) {
-              repoEl.appendChild(createCollapsibleGroup(
+              const group = createCollapsibleGroup(
                 'clone:' + repo.id + ':' + clone.id,
                 clone.label,
                 true,
@@ -362,7 +369,16 @@
                 function (cloneEl) {
                   appendPathsBranch(cloneEl, 'clone:' + repo.id + ':' + clone.id, clone.paths);
                 }
-              ));
+              );
+              if (clone.orphaned) {
+                decorateOrphanGroup(group, {
+                  scope: 'clone',
+                  id: clone.id,
+                  rel_path: clone.rel_path,
+                  root: clone.root || ''
+                });
+              }
+              repoEl.appendChild(group);
             });
           }
         ));
@@ -379,7 +395,7 @@
       pinnedSec.appendChild(empty);
     } else {
       pinned.forEach(function (pin) {
-        pinnedSec.appendChild(createCollapsibleGroup(
+        const group = createCollapsibleGroup(
           'pinned:' + pin.id,
           pin.label,
           true,
@@ -390,7 +406,16 @@
             appendWikiBranch(pinEl, 'pinned:' + pin.id, pin.wiki);
             appendPathsBranch(pinEl, 'pinned:' + pin.id, pin.paths);
           }
-        ));
+        );
+        if (pin.orphaned) {
+          decorateOrphanGroup(group, {
+            scope: 'pinned',
+            id: pin.id,
+            rel_path: pin.rel_path,
+            root: pin.root || ''
+          });
+        }
+        pinnedSec.appendChild(group);
       });
     }
     root.appendChild(pinnedSec);
@@ -791,8 +816,375 @@
     }
   }
 
+  function decorateOrphanGroup(groupEl, orphanInfo) {
+    const headerBtn = groupEl.firstElementChild;
+    if (!headerBtn) return;
+
+    const row = document.createElement('div');
+    row.className = 'tree-row-with-actions';
+    groupEl.insertBefore(row, headerBtn);
+    row.appendChild(headerBtn);
+
+    const badge = document.createElement('span');
+    badge.className = 'badge danger mini-badge';
+    badge.textContent = 'Orphaned';
+    badge.title = 'Root directory missing: ' + (orphanInfo.root || '');
+
+    const pruneBtn = document.createElement('button');
+    pruneBtn.type = 'button';
+    pruneBtn.className = 'mini-prune-btn';
+    pruneBtn.textContent = 'Prune';
+    pruneBtn.title = 'Delete orphaned staging directory';
+    pruneBtn.onclick = function (ev) {
+      ev.stopPropagation();
+      openPruneModal(orphanInfo);
+    };
+
+    row.appendChild(badge);
+    row.appendChild(pruneBtn);
+  }
+
+  async function refreshOrphans() {
+    try {
+      const res = await fetch('/api/gc');
+      if (!res.ok) return;
+      const data = await res.json();
+      currentOrphans = data.orphans || [];
+
+      const pill = document.getElementById('orphanHeaderBtn');
+      const countEl = document.getElementById('orphanHeaderCount');
+      if (pill && countEl) {
+        countEl.textContent = String(currentOrphans.length);
+        if (currentOrphans.length > 0) pill.classList.remove('hidden');
+        else pill.classList.add('hidden');
+      }
+      if (document.getElementById('orphansModal').classList.contains('open')) {
+        renderOrphansList();
+      }
+    } catch (_) {}
+  }
+
+  function openOrphansModal() {
+    renderOrphansList();
+    document.getElementById('orphansModal').classList.add('open');
+  }
+
+  function closeOrphansModal() {
+    document.getElementById('orphansModal').classList.remove('open');
+  }
+
+  function renderOrphansList() {
+    const list = document.getElementById('orphansModalList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (currentOrphans.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-note';
+      empty.textContent = 'No orphaned clones or pinned workspaces detected.';
+      list.appendChild(empty);
+      return;
+    }
+
+    currentOrphans.forEach(function (item) {
+      const card = document.createElement('div');
+      card.className = 'orphan-card';
+
+      const info = document.createElement('div');
+      info.className = 'orphan-card-info';
+
+      const top = document.createElement('div');
+      top.style.display = 'flex';
+      top.style.alignItems = 'center';
+      top.style.gap = '6px';
+      const badge = document.createElement('span');
+      badge.className = 'badge danger';
+      badge.textContent = item.scope;
+      const pathEl = document.createElement('strong');
+      pathEl.className = 'mono';
+      pathEl.textContent = item.rel_path;
+      top.appendChild(badge);
+      top.appendChild(pathEl);
+
+      const rootLine = document.createElement('div');
+      rootLine.className = 'mono';
+      rootLine.style.color = 'var(--muted)';
+      rootLine.style.marginTop = '4px';
+      rootLine.textContent = 'Missing root: ' + item.root;
+
+      info.appendChild(top);
+      info.appendChild(rootLine);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'danger';
+      btn.textContent = 'Prune...';
+      btn.onclick = function () { openPruneModal(item); };
+
+      card.appendChild(info);
+      card.appendChild(btn);
+      list.appendChild(card);
+    });
+  }
+
+  function openPruneModal(orphanInfo) {
+    pendingPruneTarget = orphanInfo;
+    document.getElementById('pruneMissingRoot').textContent = orphanInfo.root || '-';
+    document.getElementById('pruneTargetRel').textContent = orphanInfo.rel_path || '-';
+    const wikiNote = document.getElementById('pruneWikiNote');
+    if (orphanInfo.scope === 'clone') wikiNote.classList.remove('hidden');
+    else wikiNote.classList.add('hidden');
+    const errBox = document.getElementById('pruneErrorBox');
+    errBox.classList.add('hidden');
+    errBox.textContent = '';
+    document.getElementById('pruneConfirmBtn').disabled = false;
+    document.getElementById('pruneModal').classList.add('open');
+  }
+
+  function closePruneModal() {
+    pendingPruneTarget = null;
+    document.getElementById('pruneModal').classList.remove('open');
+  }
+
+  async function confirmPruneOrphan() {
+    if (!pendingPruneTarget || !pendingPruneTarget.rel_path) return;
+    const targetPath = pendingPruneTarget.rel_path;
+    const btn = document.getElementById('pruneConfirmBtn');
+    const errBox = document.getElementById('pruneErrorBox');
+    btn.disabled = true;
+    errBox.classList.add('hidden');
+
+    try {
+      const res = await fetch('/api/gc/prune', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: targetPath, confirm: true })
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        errBox.textContent = data.error || 'Failed to prune orphaned directory';
+        errBox.classList.remove('hidden');
+        btn.disabled = false;
+        return;
+      }
+
+      closePruneModal();
+      if (activeFilePath && activeFilePath.startsWith(targetPath + '/')) {
+        clearSelection();
+      }
+      showToast('Pruned ' + targetPath, 'success');
+      await refreshAll();
+    } catch (_) {
+      errBox.textContent = 'Request failed';
+      errBox.classList.remove('hidden');
+      btn.disabled = false;
+    }
+  }
+
+  function openSearchModal() {
+    const modal = document.getElementById('searchModal');
+    modal.classList.add('open');
+    const input = document.getElementById('searchInput');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+    runSearch();
+  }
+
+  function closeSearchModal() {
+    document.getElementById('searchModal').classList.remove('open');
+  }
+
+  function setSearchScope(scope) {
+    searchScopeFilter = scope;
+    document.querySelectorAll('#searchModal .filter-pill[data-scope]').forEach(function (el) {
+      if (el.getAttribute('data-scope') === scope) el.classList.add('active');
+      else el.classList.remove('active');
+    });
+    runSearch();
+  }
+
+  function setSearchType(docType) {
+    searchTypeFilter = docType;
+    document.querySelectorAll('#searchModal .filter-pill[data-type]').forEach(function (el) {
+      if (el.getAttribute('data-type') === docType) el.classList.add('active');
+      else el.classList.remove('active');
+    });
+    runSearch();
+  }
+
+  function onSearchInput() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 90);
+  }
+
+  function onSearchKeyDown(ev) {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      closeSearchModal();
+      return;
+    }
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      if (searchResultsList.length > 0) {
+        searchSelectedIdx = (searchSelectedIdx + 1) % searchResultsList.length;
+        renderSearchResults();
+      }
+      return;
+    }
+    if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      if (searchResultsList.length > 0) {
+        searchSelectedIdx = (searchSelectedIdx - 1 + searchResultsList.length) % searchResultsList.length;
+        renderSearchResults();
+      }
+      return;
+    }
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (searchResultsList[searchSelectedIdx]) {
+        closeSearchModal();
+        navigateToFile(searchResultsList[searchSelectedIdx].path);
+      }
+    }
+  }
+
+  async function runSearch() {
+    const input = document.getElementById('searchInput');
+    const q = input ? input.value.trim() : '';
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (searchScopeFilter) params.set('scope', searchScopeFilter);
+    if (searchTypeFilter) params.set('type', searchTypeFilter);
+    params.set('limit', '40');
+
+    try {
+      const res = await fetch('/api/search?' + params.toString());
+      if (!res.ok) return;
+      const data = await res.json();
+      searchResultsList = data.results || [];
+      searchSelectedIdx = 0;
+      renderSearchResults();
+    } catch (_) {}
+  }
+
+  function appendHighlightedText(parent, text, tokens) {
+    if (!text) return;
+    if (!tokens || tokens.length === 0) {
+      parent.appendChild(document.createTextNode(text));
+      return;
+    }
+    const lower = text.toLowerCase();
+    let cursor = 0;
+    while (cursor < text.length) {
+      let bestIdx = -1;
+      let bestLen = 0;
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (!tok) continue;
+        const found = lower.indexOf(tok, cursor);
+        if (found >= 0 && (bestIdx < 0 || found < bestIdx)) {
+          bestIdx = found;
+          bestLen = tok.length;
+        }
+      }
+      if (bestIdx < 0) {
+        parent.appendChild(document.createTextNode(text.slice(cursor)));
+        break;
+      }
+      if (bestIdx > cursor) {
+        parent.appendChild(document.createTextNode(text.slice(cursor, bestIdx)));
+      }
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(bestIdx, bestIdx + bestLen);
+      parent.appendChild(mark);
+      cursor = bestIdx + bestLen;
+    }
+  }
+
+  function renderSearchResults() {
+    const container = document.getElementById('searchResults');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (searchResultsList.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-note';
+      empty.style.padding = '12px 4px';
+      empty.textContent = 'No matching fragments or wiki pages found.';
+      container.appendChild(empty);
+      return;
+    }
+
+    const input = document.getElementById('searchInput');
+    const tokens = (input ? input.value : '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+    searchResultsList.forEach(function (item, idx) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'search-result-item' + (idx === searchSelectedIdx ? ' selected' : '');
+      btn.onclick = function () {
+        closeSearchModal();
+        navigateToFile(item.path);
+      };
+
+      const top = document.createElement('div');
+      top.className = 'search-result-top';
+
+      const title = document.createElement('span');
+      title.className = 'search-result-title';
+      title.textContent = item.title || item.name;
+
+      const badges = document.createElement('span');
+      badges.className = 'search-result-badges';
+
+      const scopeBadge = document.createElement('span');
+      scopeBadge.className = 'badge';
+      scopeBadge.textContent = item.scope;
+      badges.appendChild(scopeBadge);
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'badge accent';
+      typeBadge.textContent = item.type;
+      badges.appendChild(typeBadge);
+
+      if (item.archived) {
+        const archBadge = document.createElement('span');
+        archBadge.className = 'badge warn';
+        archBadge.textContent = 'archived';
+        badges.appendChild(archBadge);
+      }
+
+      top.appendChild(title);
+      top.appendChild(badges);
+
+      const pathEl = document.createElement('div');
+      pathEl.className = 'search-result-path mono';
+      pathEl.textContent = item.path;
+
+      btn.appendChild(top);
+      btn.appendChild(pathEl);
+
+      if (item.snippet) {
+        const snip = document.createElement('div');
+        snip.className = 'search-result-snippet';
+        appendHighlightedText(snip, item.snippet, tokens);
+        btn.appendChild(snip);
+      }
+
+      container.appendChild(btn);
+    });
+  }
+
+  function onModalBackdropClick(ev, modalId) {
+    if (ev.target && ev.target.id === modalId) {
+      document.getElementById(modalId).classList.remove('open');
+    }
+  }
+
   async function refreshAll() {
-    await refreshTree();
+    await Promise.all([refreshTree(), refreshOrphans()]);
     if (activeFilePath) {
       await loadFile(activeFilePath);
     }
@@ -845,6 +1237,42 @@
   window.setAllExpanded = setAllExpanded;
   window.navigateToFile = navigateToFile;
   window.toggleDocViewMode = toggleDocViewMode;
+  window.openSearchModal = openSearchModal;
+  window.closeSearchModal = closeSearchModal;
+  window.setSearchScope = setSearchScope;
+  window.setSearchType = setSearchType;
+  window.onSearchInput = onSearchInput;
+  window.onSearchKeyDown = onSearchKeyDown;
+  window.openOrphansModal = openOrphansModal;
+  window.closeOrphansModal = closeOrphansModal;
+  window.openPruneModal = openPruneModal;
+  window.closePruneModal = closePruneModal;
+  window.confirmPruneOrphan = confirmPruneOrphan;
+  window.onModalBackdropClick = onModalBackdropClick;
+
+  document.addEventListener('keydown', function (ev) {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') {
+      ev.preventDefault();
+      if (document.getElementById('searchModal').classList.contains('open')) {
+        closeSearchModal();
+      } else {
+        openSearchModal();
+      }
+      return;
+    }
+    if (ev.key === 'Escape') {
+      closeSearchModal();
+      closePruneModal();
+      closeOrphansModal();
+    }
+  });
+
+  (function setShortcutLabel() {
+    const kbd = document.getElementById('searchShortcutKey');
+    if (kbd && navigator.platform && navigator.platform.toLowerCase().indexOf('mac') === -1) {
+      kbd.textContent = 'Ctrl+K';
+    }
+  })();
 
   document.addEventListener('click', function (ev) {
     const link = ev.target && ev.target.closest ? ev.target.closest('a.wikilink') : null;
@@ -864,7 +1292,7 @@
 
   initTheme();
   connectSSE();
-  refreshTree().then(function () {
+  Promise.all([refreshTree(), refreshOrphans()]).then(function () {
     const initial = parseHashFile();
     if (initial) {
       loadFile(initial);

@@ -98,6 +98,7 @@ func scanClones(storeRoot, repoAbs, repoRel string) []CloneScope {
 			RelPath:  path.Join(repoRel, "clones", id),
 			Root:     rec.Root,
 			LastSeen: rec.LastSeen,
+			Orphaned: CheckRootOrphaned(rec.Root),
 			Paths:    scanPaths(storeRoot, filepath.Join(cloneAbs, "paths"), "_main"),
 		})
 	}
@@ -125,6 +126,7 @@ func scanPinned(storeRoot string) []PinnedScope {
 			RelPath:  path.Join("pinned", id),
 			Root:     rec.Root,
 			LastSeen: rec.LastSeen,
+			Orphaned: CheckRootOrphaned(rec.Root),
 			Wiki:     scanWiki(storeRoot, filepath.Join(pinAbs, "wiki")),
 			Paths:    scanPaths(storeRoot, filepath.Join(pinAbs, "paths"), "_root"),
 		})
