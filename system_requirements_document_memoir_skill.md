@@ -127,7 +127,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 * **FR-1.3 (Git `clone_id` & `path_key`):**
   * Compute `MAIN_ROOT = dirname(realpath(git rev-parse --git-common-dir))`.
   * Compute `project-slug` from `basename(MAIN_ROOT)` (lowercase, non-alphanumeric sequences collapsed to a single `-`, trimmed of leading/trailing `-`).
-  * Compute `sha8 = sha256(MAIN_ROOT)[:8]`.
+  * Compute `sha8 = sha256(realpath(git rev-parse --git-common-dir))[:8]`.
   * Set `clone_id = "<project-slug>--<sha8>"`. Persist/update `clone.json` at `<STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/clone.json` with `{"root": MAIN_ROOT, "last_seen": "<ISO-8601>"}`.
   * Compute `TOPLEVEL = realpath(git rev-parse --show-toplevel)`. If `TOPLEVEL == MAIN_ROOT`, `path_key = "_main"`. Otherwise, if `TOPLEVEL` is inside `MAIN_ROOT`, use `relpath(TOPLEVEL, MAIN_ROOT).replace("/", "__")`; else use `basename(TOPLEVEL)`.
   * Set `$BASE_DIR = <STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/paths/<path_key>`.
