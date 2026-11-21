@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import shutil
+import stat
 import hashlib
 import json
 import argparse
@@ -240,6 +241,29 @@ def generate_resume(base_dir: Path):
         print(f"{idx}. {filepath.absolute()}")
     print("\nBased on the state file, resume the current task.")
 
+def collect_orphans(store: Path, prune: bool) -> None:
+    for pattern in ("repos/*/clones/*/clone.json", "pinned/*/workspace.json"):
+        for record in sorted(store.glob(pattern)):
+            # A linked repo, scope or record could redirect pruning outside the store.
+            if record.resolve() != record:
+                print(f"[Memoir] Skipping linked metadata: {record}", file=sys.stderr)
+                continue
+            metadata = json.loads(record.read_text(encoding="utf-8"))
+            root = metadata.get("root") if isinstance(metadata, dict) else None
+            if not isinstance(root, str) or not Path(root).is_absolute():
+                raise ValueError(f"Invalid root in {record}")
+            try:
+                info = Path(root).stat()
+            except (FileNotFoundError, NotADirectoryError):
+                pass
+            else:
+                if stat.S_ISDIR(info.st_mode):
+                    continue
+            print(f"[Memoir] Orphan: {record.parent} (missing directory {root})")
+            if prune:
+                shutil.rmtree(record.parent)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Memoir Management CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -260,7 +284,15 @@ def main():
         pin_parser = subparsers.add_parser(command, help=f"{command.capitalize()} a workspace root")
         pin_parser.add_argument("directory", nargs="?", default=".", type=Path)
 
+    gc_parser = subparsers.add_parser("gc", help="Report scopes with missing source directories")
+    mode = gc_parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Only report orphans (default)")
+    mode.add_argument("--prune", action="store_true", help="Remove each orphaned scope directory")
+
     args = parser.parse_args()
+    if args.command == "gc":
+        collect_orphans(store_root(), args.prune)
+        return
     if args.command in {"pin", "unpin"}:
         update_pin(store_root(), args.directory.expanduser().resolve(), args.command == "pin")
         return
