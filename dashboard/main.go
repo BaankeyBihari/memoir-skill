@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/web"
 )
 
@@ -41,8 +42,17 @@ func main() {
 		log.Fatalf("listen %s: %v", addr, err)
 	}
 
+	searchIdx := store.NewSearchIndex(storeRoot)
+	if err := searchIdx.Rebuild(); err != nil {
+		log.Printf("memoir-ui: initial search index build: %v", err)
+	}
+
 	hub := web.NewHub()
-	watcher, err := web.NewWatcher(storeRoot, hub, 100*time.Millisecond, nil)
+	watcher, err := web.NewWatcher(storeRoot, hub, 100*time.Millisecond, func(web.Event) {
+		if err := searchIdx.Rebuild(); err != nil {
+			log.Printf("memoir-ui: search reindex error: %v", err)
+		}
+	})
 	if err != nil {
 		log.Fatalf("init watcher: %v", err)
 	}
@@ -52,7 +62,7 @@ func main() {
 
 	go watcher.Start(ctx)
 
-	srv := web.NewServer(storeRoot, *port, hub)
+	srv := web.NewServer(storeRoot, *port, hub, searchIdx)
 	httpServer := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

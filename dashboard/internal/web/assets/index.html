@@ -23,6 +23,13 @@
       <span id="storePathBadge" class="store-pill mono" title="Active Memoir store root">loading...</span>
     </div>
     <div class="header-actions">
+      <button id="searchTriggerBtn" type="button" class="search-trigger" onclick="openSearchModal()" title="Full-text search across store">
+        <span>Search</span>
+        <kbd id="searchShortcutKey" class="kbd">⌘K</kbd>
+      </button>
+      <button id="orphanHeaderBtn" type="button" class="orphan-pill hidden" onclick="openOrphansModal()" title="Manage orphaned clones and pinned workspaces">
+        <span id="orphanHeaderCount">0</span> Orphaned
+      </button>
       <div id="sseStatus" class="sse-pill" title="Live reload status over /events">
         <span class="sse-dot"></span>
         <span id="sseStatusText">Connecting</span>
@@ -146,6 +153,80 @@
         </section>
       </article>
     </main>
+  </div>
+
+  <!-- Global Cmd+K Search Modal -->
+  <div id="searchModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Search Memoir Store" onclick="onModalBackdropClick(event, 'searchModal')">
+    <div class="modal search-modal">
+      <div class="search-input-row">
+        <input id="searchInput" type="text" placeholder="Search decisions, wikis, logs, references, feedback..." autocomplete="off" oninput="onSearchInput()" onkeydown="onSearchKeyDown(event)">
+        <button type="button" class="mini-btn" onclick="closeSearchModal()">Esc</button>
+      </div>
+      <div class="filter-bar">
+        <div class="filter-group" aria-label="Filter by scope">
+          <span class="filter-label">Scope</span>
+          <button type="button" class="filter-pill active" data-scope="" onclick="setSearchScope('')">All</button>
+          <button type="button" class="filter-pill" data-scope="repo" onclick="setSearchScope('repo')">Repo</button>
+          <button type="button" class="filter-pill" data-scope="pinned" onclick="setSearchScope('pinned')">Pinned</button>
+          <button type="button" class="filter-pill" data-scope="standalone" onclick="setSearchScope('standalone')">Standalone</button>
+        </div>
+        <div class="filter-group" aria-label="Filter by fragment type">
+          <span class="filter-label">Type</span>
+          <button type="button" class="filter-pill active" data-type="" onclick="setSearchType('')">All</button>
+          <button type="button" class="filter-pill" data-type="decision" onclick="setSearchType('decision')">Decision</button>
+          <button type="button" class="filter-pill" data-type="log" onclick="setSearchType('log')">Log</button>
+          <button type="button" class="filter-pill" data-type="reference" onclick="setSearchType('reference')">Reference</button>
+          <button type="button" class="filter-pill" data-type="feedback" onclick="setSearchType('feedback')">Feedback</button>
+          <button type="button" class="filter-pill" data-type="wiki" onclick="setSearchType('wiki')">Wiki</button>
+        </div>
+      </div>
+      <div id="searchResults" class="search-results"></div>
+    </div>
+  </div>
+
+  <!-- Orphaned Scopes Overview Modal -->
+  <div id="orphansModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Orphaned Scopes" onclick="onModalBackdropClick(event, 'orphansModal')">
+    <div class="modal" style="max-width:660px;">
+      <div class="modal-header">
+        <h3>Orphaned Clones &amp; Workspaces</h3>
+        <button type="button" onclick="closeOrphansModal()">Close</button>
+      </div>
+      <p class="subtitle" style="margin-bottom:14px;">
+        Staging directories whose local <code class="mono">root</code> path no longer exists on disk. Shared repository <code class="mono">wiki/</code> folders are preserved when pruning clones.
+      </p>
+      <div id="orphansModalList" class="orphans-list"></div>
+    </div>
+  </div>
+
+  <!-- Confirmed Prune Modal -->
+  <div id="pruneModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm Orphan Prune" onclick="onModalBackdropClick(event, 'pruneModal')">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Prune Orphaned Scope</h3>
+        <button type="button" onclick="closePruneModal()">Close</button>
+      </div>
+      <p class="subtitle">
+        This permanently deletes the orphaned staging directory from <code class="mono">$STORE_ROOT</code> because its workspace root is missing on disk.
+      </p>
+      <div class="prune-details">
+        <div class="prune-row">
+          <span class="stat-label">Missing Root</span>
+          <div id="pruneMissingRoot" class="mono"></div>
+        </div>
+        <div class="prune-row">
+          <span class="stat-label">Staging Folder to Delete</span>
+          <div id="pruneTargetRel" class="mono"></div>
+        </div>
+        <div id="pruneWikiNote" class="prune-safe-note hidden">
+          Shared repository <code class="mono">wiki/</code> and sibling clones will not be affected.
+        </div>
+      </div>
+      <div id="pruneErrorBox" class="error-box hidden"></div>
+      <div class="modal-footer">
+        <button type="button" onclick="closePruneModal()">Cancel</button>
+        <button id="pruneConfirmBtn" type="button" class="danger" onclick="confirmPruneOrphan()">Delete Orphaned Folder</button>
+      </div>
+    </div>
   </div>
 
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
