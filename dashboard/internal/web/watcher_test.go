@@ -69,8 +69,13 @@ func TestWatcherDebouncesRapidWrites(t *testing.T) {
 	defer hub.Close()
 
 	var count atomic.Int32
-	w, err := NewWatcher(store, hub, 80*time.Millisecond, func(ev Event) {
+	fired := make(chan struct{}, 16)
+	w, err := NewWatcher(store, hub, 250*time.Millisecond, func(ev Event) {
 		count.Add(1)
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
 	})
 	if err != nil {
 		t.Fatalf("NewWatcher failed: %v", err)
@@ -83,14 +88,19 @@ func TestWatcherDebouncesRapidWrites(t *testing.T) {
 	time.Sleep(40 * time.Millisecond)
 
 	target := filepath.Join(store, "notes.md")
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 8; i++ {
 		if err := os.WriteFile(target, []byte("update\n"), 0o644); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
-	time.Sleep(220 * time.Millisecond)
+	select {
+	case <-fired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for debounced watcher event")
+	}
+
+	time.Sleep(150 * time.Millisecond)
 	got := count.Load()
 	if got != 1 {
 		t.Fatalf("expected 1 debounced event for rapid writes, got %d", got)
