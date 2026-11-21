@@ -117,12 +117,32 @@
         <header class="doc-header">
           <div class="doc-title-row">
             <h1 id="docTitle" class="doc-title"></h1>
-            <div id="docKindBadges" class="doc-kind-badges"></div>
+            <div class="doc-header-right">
+              <div id="docKindBadges" class="doc-kind-badges"></div>
+              <button id="docViewToggle" type="button" class="mini-btn" onclick="toggleDocViewMode()">Raw</button>
+            </div>
           </div>
           <div id="docRelPath" class="doc-rel-path mono"></div>
+          <div id="docMetadataBar" class="meta-bar hidden"></div>
+          <div id="docSourcesBar" class="sources-row hidden"></div>
         </header>
+
+        <section id="docDecisionChain" class="chain-section hidden">
+          <div class="section-label">Decision Supersession Chain</div>
+          <div id="docChainTrack" class="chain-track"></div>
+        </section>
+
         <section class="doc-surface">
-          <pre id="docRawBody" class="raw-markdown"></pre>
+          <div id="docRenderedBody" class="markdown-body"></div>
+          <pre id="docRawBody" class="raw-markdown hidden"></pre>
+        </section>
+
+        <section id="docBacklinks" class="backlinks-section hidden">
+          <div class="backlinks-header">
+            <span class="section-label">Inbound Backlinks</span>
+            <span id="docBacklinksCount" class="tree-count">0</span>
+          </div>
+          <div id="docBacklinksList" class="backlinks-list"></div>
         </section>
       </article>
     </main>

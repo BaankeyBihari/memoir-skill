@@ -5,6 +5,7 @@
   const changeListeners = new Set();
   let currentTree = null;
   let activeFilePath = '';
+  let docViewMode = 'rendered';
   let eventSource = null;
 
   function applyTheme(theme) {
@@ -500,6 +501,232 @@
     document.getElementById('documentView').classList.add('hidden');
   }
 
+  function applyDocViewMode() {
+    const rendered = document.getElementById('docRenderedBody');
+    const raw = document.getElementById('docRawBody');
+    const btn = document.getElementById('docViewToggle');
+    if (!rendered || !raw || !btn) return;
+    if (docViewMode === 'raw') {
+      rendered.classList.add('hidden');
+      raw.classList.remove('hidden');
+      btn.textContent = 'Rendered';
+    } else {
+      raw.classList.add('hidden');
+      rendered.classList.remove('hidden');
+      btn.textContent = 'Raw';
+    }
+  }
+
+  function toggleDocViewMode() {
+    docViewMode = docViewMode === 'raw' ? 'rendered' : 'raw';
+    applyDocViewMode();
+  }
+
+  function renderMetadataBadges(badges, sources) {
+    const bar = document.getElementById('docMetadataBar');
+    bar.innerHTML = '';
+    const items = badges || [];
+    if (items.length === 0) {
+      bar.classList.add('hidden');
+    } else {
+      bar.classList.remove('hidden');
+      items.forEach(function (b) {
+        const isLink = Boolean(b.target_path || b.url);
+        const el = document.createElement(isLink ? 'a' : 'span');
+        el.className = 'meta-badge';
+        if (b.target_path) {
+          el.href = '#file=' + encodeURIComponent(b.target_path);
+          el.onclick = function (ev) {
+            ev.preventDefault();
+            navigateToFile(b.target_path);
+          };
+        } else if (b.url) {
+          el.href = b.url;
+          el.target = '_blank';
+          el.rel = 'noopener noreferrer';
+        }
+        const k = document.createElement('span');
+        k.className = 'meta-badge-key';
+        k.textContent = b.key;
+        const v = document.createElement('span');
+        v.className = 'meta-badge-val mono';
+        v.textContent = b.value;
+        el.appendChild(k);
+        el.appendChild(v);
+        bar.appendChild(el);
+      });
+    }
+
+    const srcBar = document.getElementById('docSourcesBar');
+    srcBar.innerHTML = '';
+    const srcItems = sources || [];
+    if (srcItems.length === 0) {
+      srcBar.classList.add('hidden');
+    } else {
+      srcBar.classList.remove('hidden');
+      const lbl = document.createElement('span');
+      lbl.className = 'sources-label';
+      lbl.textContent = 'Sources:';
+      srcBar.appendChild(lbl);
+
+      srcItems.forEach(function (s) {
+        const el = document.createElement(s.target_path && !s.broken ? 'a' : 'span');
+        el.className = 'source-pill mono' + (s.broken ? ' broken' : '');
+        el.textContent = s.label;
+        if (s.target_path && !s.broken) {
+          el.href = '#file=' + encodeURIComponent(s.target_path);
+          el.onclick = function (ev) {
+            ev.preventDefault();
+            navigateToFile(s.target_path);
+          };
+        }
+        srcBar.appendChild(el);
+      });
+    }
+  }
+
+  function createArrowSvg() {
+    const span = document.createElement('span');
+    span.className = 'chain-arrow';
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>';
+    return span;
+  }
+
+  function renderDecisionChain(chain) {
+    const sec = document.getElementById('docDecisionChain');
+    const track = document.getElementById('docChainTrack');
+    track.innerHTML = '';
+    if (!chain || !chain.nodes || chain.nodes.length === 0) {
+      sec.classList.add('hidden');
+      return;
+    }
+    sec.classList.remove('hidden');
+
+    chain.nodes.forEach(function (node, idx) {
+      if (idx > 0) {
+        track.appendChild(createArrowSvg());
+      }
+      const el = document.createElement(node.missing || !node.path ? 'div' : 'button');
+      if (el.tagName === 'BUTTON') {
+        el.type = 'button';
+        el.onclick = function () { navigateToFile(node.path); };
+      }
+      el.className = 'chain-node';
+      if (node.current) el.classList.add('is-current');
+      if (node.active_head) el.classList.add('is-active-head');
+      if (node.missing) el.classList.add('is-missing');
+
+      const top = document.createElement('div');
+      top.className = 'chain-node-top';
+
+      const status = document.createElement('span');
+      if (node.missing) {
+        status.className = 'badge danger';
+        status.textContent = 'Missing';
+      } else if (node.active_head) {
+        status.className = 'badge ok';
+        status.textContent = 'Active';
+      } else if (node.archived) {
+        status.className = 'badge warn';
+        status.textContent = 'Archived';
+      } else {
+        status.className = 'badge accent';
+        status.textContent = 'Decision';
+      }
+      top.appendChild(status);
+
+      if (node.date) {
+        const dt = document.createElement('span');
+        dt.className = 'mono';
+        dt.style.fontSize = '0.72rem';
+        dt.style.color = 'var(--muted)';
+        dt.textContent = node.date;
+        top.appendChild(dt);
+      }
+
+      const title = document.createElement('div');
+      title.className = 'chain-node-title';
+      title.textContent = node.title || node.id;
+
+      const idEl = document.createElement('div');
+      idEl.className = 'chain-node-id mono';
+      idEl.textContent = node.id;
+
+      el.appendChild(top);
+      el.appendChild(title);
+      el.appendChild(idEl);
+      track.appendChild(el);
+    });
+  }
+
+  function renderBacklinks(doc) {
+    const sec = document.getElementById('docBacklinks');
+    const countEl = document.getElementById('docBacklinksCount');
+    const list = document.getElementById('docBacklinksList');
+    list.innerHTML = '';
+
+    if (doc.kind !== 'wiki') {
+      sec.classList.add('hidden');
+      return;
+    }
+
+    sec.classList.remove('hidden');
+    const items = doc.backlinks || [];
+    countEl.textContent = String(items.length);
+
+    if (items.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-note';
+      empty.textContent = 'No inbound backlinks from other wiki pages yet.';
+      list.appendChild(empty);
+      return;
+    }
+
+    items.forEach(function (bl) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'backlink-card';
+      card.onclick = function () { navigateToFile(bl.source_path); };
+
+      const top = document.createElement('div');
+      top.className = 'backlink-top';
+      const title = document.createElement('span');
+      title.className = 'backlink-title';
+      title.textContent = bl.source_title || bl.source_path;
+      top.appendChild(title);
+
+      if (bl.cross_wiki) {
+        const pill = document.createElement('span');
+        pill.className = 'badge accent';
+        pill.textContent = 'cross-wiki: ' + bl.source_scope;
+        top.appendChild(pill);
+      } else if (bl.kind && bl.kind !== 'page') {
+        const pill = document.createElement('span');
+        pill.className = 'badge';
+        pill.textContent = bl.kind;
+        top.appendChild(pill);
+      }
+
+      const pathEl = document.createElement('div');
+      pathEl.className = 'mono';
+      pathEl.style.fontSize = '0.73rem';
+      pathEl.style.color = 'var(--muted)';
+      pathEl.textContent = bl.source_path;
+
+      card.appendChild(top);
+      card.appendChild(pathEl);
+
+      if (bl.snippet) {
+        const snip = document.createElement('div');
+        snip.className = 'backlink-snippet';
+        snip.textContent = bl.snippet;
+        card.appendChild(snip);
+      }
+      list.appendChild(card);
+    });
+  }
+
   function showDocumentView(doc) {
     document.getElementById('overviewView').classList.add('hidden');
     document.getElementById('documentView').classList.remove('hidden');
@@ -526,7 +753,15 @@
       badges.appendChild(a);
     }
 
+    renderMetadataBadges(doc.badges, doc.sources);
+    renderDecisionChain(doc.decision_chain);
+
+    const rendered = document.getElementById('docRenderedBody');
+    rendered.innerHTML = doc.html || '';
     document.getElementById('docRawBody').textContent = doc.raw || '';
+    applyDocViewMode();
+
+    renderBacklinks(doc);
   }
 
   async function loadFile(relPath) {
@@ -609,6 +844,17 @@
   window.clearSelection = clearSelection;
   window.setAllExpanded = setAllExpanded;
   window.navigateToFile = navigateToFile;
+  window.toggleDocViewMode = toggleDocViewMode;
+
+  document.addEventListener('click', function (ev) {
+    const link = ev.target && ev.target.closest ? ev.target.closest('a.wikilink') : null;
+    if (!link) return;
+    const targetPath = link.getAttribute('data-path');
+    if (targetPath) {
+      ev.preventDefault();
+      navigateToFile(targetPath);
+    }
+  });
   window.memoirEvents = {
     onStoreChange: function (fn) {
       changeListeners.add(fn);
