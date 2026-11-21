@@ -63,3 +63,36 @@ def test_local_fallback(tmp_path, store):
     git(tmp_path, "init")
     key = tmp_path.name.replace("_", "-") + "--" + sha8(tmp_path / ".git")
     assert Path(cli(tmp_path, "path")) == store / "repos" / ("local__" + key) / "clones" / key / "paths/_main"
+
+
+def test_pin_resolution(tmp_path, store):
+    root = tmp_path / "My Notes"
+    nested = root / "drafts"
+    child = nested / "2026"
+    child.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(root)
+    sibling = tmp_path / "My Notes Archive"
+    sibling.mkdir()
+    workspace = store / "pinned" / ("my-notes--" + sha8(root))
+    standalone = store / "standalone" / ("my-notes-archive--" + sha8(sibling))
+    assert cli(sibling, "path") == str(standalone)
+    for path in (root, alias):
+        assert str(workspace) in cli(tmp_path, "pin", path)
+    assert json.loads((store / "pinned.json").read_text()) == [str(root.resolve())]
+    assert cli(root, "path") == str(workspace / "paths/_root")
+    cli(child, "init")
+    assert (workspace / "paths/drafts__2026/archive").is_dir()
+    assert json.loads((workspace / "workspace.json").read_text())["root"] == str(root.resolve())
+    cli(nested, "pin")
+    inner = store / "pinned" / ("drafts--" + sha8(nested))
+    assert cli(child, "path") == str(inner / "paths/2026")
+    cli(nested, "unpin")
+    cli(nested, "unpin")
+    assert cli(child, "path") == str(workspace / "paths/drafts__2026")
+    assert cli(sibling, "path") == str(standalone)
+    git(child, "init")
+    assert Path(cli(child, "path")).is_relative_to(store / "repos")
+    cli(root, "unpin")
+    assert Path(cli(root, "path")) == store / "standalone" / workspace.name
+    assert workspace.is_dir()

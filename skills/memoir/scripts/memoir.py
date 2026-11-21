@@ -65,10 +65,49 @@ def record_scope(record: Path, root: Path) -> None:
     atomic_write(record, json.dumps(data) + "\n")
 
 
+def pinned_roots(store: Path) -> list[Path]:
+    try:
+        pins = json.loads((store / "pinned.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    if not isinstance(pins, list) or not all(isinstance(p, str) and Path(p).is_absolute() for p in pins):
+        raise ValueError("pinned.json must contain an array of absolute paths")
+    return [Path(p) for p in pins]
+
+
+def update_pin(store: Path, root: Path, add: bool) -> None:
+    import fcntl
+
+    if add and not root.is_dir():
+        raise ValueError(f"Cannot pin missing directory {root}")
+    store.mkdir(parents=True, exist_ok=True)
+    # Lock a stable inode because atomic replacement changes pinned.json's inode.
+    with (store / ".pinned.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        pins = set(pinned_roots(store))
+        workspace = store / "pinned" / scope_id(root, root)
+        if add:
+            pins.add(root)
+            record_scope(workspace / "workspace.json", root)
+        else:
+            pins.discard(root)
+        atomic_write(store / "pinned.json", json.dumps(sorted(map(str, pins))) + "\n")
+    print(f"{workspace} ({root})")
+
+
 def resolve_store(store: Path, record: bool) -> Path:
     top = git_output("rev-parse", "--show-toplevel")
     if not top:
-        return store
+        cwd = Path.cwd().resolve()
+        matches = [pin for pin in pinned_roots(store) if cwd.is_relative_to(pin)]
+        if not matches:
+            return store / "standalone" / scope_id(cwd, cwd)
+        root = max(matches, key=lambda pin: len(pin.parts))
+        workspace = store / "pinned" / scope_id(root, root)
+        if record:
+            record_scope(workspace / "workspace.json", root)
+        key = "__".join(cwd.relative_to(root).parts) or "_root"
+        return workspace / "paths" / key
     toplevel = Path(top).resolve()
     common_path = git_output("rev-parse", "--git-common-dir")
     if not common_path:
@@ -217,7 +256,14 @@ def main():
     
     subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
 
+    for command in ("pin", "unpin"):
+        pin_parser = subparsers.add_parser(command, help=f"{command.capitalize()} a workspace root")
+        pin_parser.add_argument("directory", nargs="?", default=".", type=Path)
+
     args = parser.parse_args()
+    if args.command in {"pin", "unpin"}:
+        update_pin(store_root(), args.directory.expanduser().resolve(), args.command == "pin")
+        return
     base_dir = resolve_store(store_root(), args.command != "path")
     if args.command != "path":
         check_access(base_dir)
