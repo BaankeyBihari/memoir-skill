@@ -23,7 +23,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 src=
 if [[ -f ${BASH_SOURCE[0]:-} ]]; then
-    src=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+    src=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 fi
 source_tree() {
     if [[ -z $src || ! -d $src/skills/memoir ]]; then
