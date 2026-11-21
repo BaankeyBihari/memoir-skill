@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/render"
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
 )
 
@@ -148,13 +149,26 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	cleanRel := path.Clean(relPath)
 	kind, archived := store.ClassifyFile(cleanRel)
+	rawStr := string(raw)
+
+	doc, err := render.RenderDocument(s.StoreRoot, cleanRel, rawStr)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":     cleanRel,
-		"name":     path.Base(cleanRel),
-		"title":    store.ExtractTitle(resolved),
-		"kind":     kind,
-		"archived": archived,
-		"raw":      string(raw),
+		"path":           cleanRel,
+		"name":           path.Base(cleanRel),
+		"title":          doc.Title,
+		"kind":           kind,
+		"archived":       archived,
+		"raw":            rawStr,
+		"html":           doc.HTML,
+		"badges":         doc.Badges,
+		"sources":        doc.Sources,
+		"backlinks":      doc.Backlinks,
+		"decision_chain": doc.DecisionChain,
 	})
 }
 

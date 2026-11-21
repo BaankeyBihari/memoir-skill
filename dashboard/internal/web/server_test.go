@@ -104,10 +104,14 @@ func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
 func TestServerTreeAndFileEndpoints(t *testing.T) {
 	storeRoot := t.TempDir()
 	wikiFile := filepath.Join(storeRoot, "repos", "github.com__acme__app", "wiki", "index.md")
-	if err := os.MkdirAll(filepath.Dir(wikiFile), 0o755); err != nil {
+	decisionFile := filepath.Join(storeRoot, "repos", "github.com__acme__app", "wiki", "decisions", "use-go.md")
+	if err := os.MkdirAll(filepath.Dir(decisionFile), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(wikiFile, []byte("# Wiki Index\nUpdated: 2026-11-21\n"), 0o644); err != nil {
+	if err := os.WriteFile(decisionFile, []byte("# Use Go\nType: decision\nUpdated: 2026-11-21\n"), 0o644); err != nil {
+		t.Fatalf("write decision: %v", err)
+	}
+	if err := os.WriteFile(wikiFile, []byte("# Wiki Index\nUpdated: 2026-11-21\n\n- [[decisions/use-go]]\n"), 0o644); err != nil {
 		t.Fatalf("write index: %v", err)
 	}
 
@@ -145,6 +149,30 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 	}
 	if fileResp["title"] != "Wiki Index" || fileResp["kind"] != "wiki" {
 		t.Fatalf("unexpected file payload: %#v", fileResp)
+	}
+	htmlBody, _ := fileResp["html"].(string)
+	if !strings.Contains(htmlBody, `class="wikilink"`) {
+		t.Fatalf("expected rendered wikilink in html, got %q", htmlBody)
+	}
+	badges, ok := fileResp["badges"].([]any)
+	if !ok || len(badges) == 0 {
+		t.Fatalf("expected parsed header badges, got %#v", fileResp["badges"])
+	}
+
+	// Verify backlinks on target decision page.
+	dReq := httptest.NewRequest(http.MethodGet, "/api/file?path=repos/github.com__acme__app/wiki/decisions/use-go.md", nil)
+	dRec := httptest.NewRecorder()
+	h.ServeHTTP(dRec, dReq)
+	if dRec.Code != http.StatusOK {
+		t.Fatalf("GET decision wiki status = %d, want 200", dRec.Code)
+	}
+	var dResp map[string]any
+	if err := json.Unmarshal(dRec.Body.Bytes(), &dResp); err != nil {
+		t.Fatalf("decode decision file: %v", err)
+	}
+	backlinks, ok := dResp["backlinks"].([]any)
+	if !ok || len(backlinks) != 1 {
+		t.Fatalf("expected 1 backlink from index.md, got %#v", dResp["backlinks"])
 	}
 
 	// GET /api/file invalid traversal
