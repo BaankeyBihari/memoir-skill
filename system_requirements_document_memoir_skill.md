@@ -1,90 +1,226 @@
-# System Requirements Document: Memoir Skill
+# System Requirements Document: Memoir Monorepo (v2.0)
+
+**Repository:** `BaankeyBihari/memoir-skill`  
+**Status:** Approved for Implementation  
+**Scope:** Monorepo restructure, centralized `~/.memoir` store migration (`memoir`), Karpathy-style cumulative knowledge compiler (`memoir-wiki`), local Go web browser (`memoir-ui`), and unified `install.sh` installer.
+
+---
 
 ## 1. Introduction
 
 ### 1.1 Purpose
-This document outlines the system requirements, architecture, and design rationale for the **Memoir Skill**, a standalone state-management and context-compaction utility designed for extended LLM CLI sessions (e.g., Claude Code, Antigravity/Agy, OpenAI Codex).
+This document defines the system requirements, storage schema, and component contracts for **Memoir v2.0**—a local-first memory, session-compaction, and cumulative knowledge-management system for LLM CLI harnesses (Claude Code, OpenAI Codex CLI, Antigravity/`agy`, and Pi).
 
-### 1.2 Problem Statement
-When using CLI-based LLMs for deep coding or architectural work, users encounter three major friction points:
-1. **Context Entropy & Token Bloat:** As sessions grow, the LLM loses track of earlier decisions and current state, resulting in degraded reasoning, hallucination, and repetitive summarizing.
-2. **Sandbox Restrictions:** Corporate or system sandboxes often prevent direct modification of global memory or configuration files, breaking traditional memory-management tools (like global MCP memory servers).
-3. **Context Reset Friction:** Manually extracting decisions, summarizing the current state, and typing out paths to start a fresh, clean session is tedious. Developers often avoid clearing context until the LLM's output completely degrades.
+### 1.2 Problem Statement (Lessons from v1)
+While v1 proved that deterministic CLI path resolution paired with typed Markdown fragments (`decision`, `log`, `reference`, `feedback`, `state`) prevents context entropy, storing memory inside `<repo-root>/.agents/memoir` introduced four friction points:
+1. **Worktree Sandbox Prompts:** Invoking an agent inside a Git worktree (`Project-X/Worktrees/wt-*`) resolved writes to the main checkout above the workspace root, repeatedly triggering out-of-workspace write permission prompts.
+2. **Multi-Clone Collisions:** Cloning the same repository in two local paths (`~/work/Project-X` and `~/scratch/Project-X`) risked state collisions if keyed solely by remote URL, whereas pure path keying fractured shared architectural knowledge across worktrees.
+3. **Fragment Accumulation Without Synthesis:** Point-in-time session fragments accumulated in `active/` and `archive/` without rolling up into a living, cross-linked architectural knowledge base.
+4. **Non-Git Workspace Fragmentation:** Directories outside Git lacked a parent-root anchor unless the user manually set `$MEMOIR_STORE`.
 
 ### 1.3 Solution Overview
-Memoir resolves these issues using a **project-scoped, CLI-driven local filesystem approach**. It abandons centralized MCP servers and global state files; a global store is used only outside Git and only when the user opts in (FR-1.1). Instead, it combines a strict LLM system prompt with a portable Python CLI script to write context fragments (decisions, state, logs) directly to the local Git repository. This allows developers to frequently `CLEAR` their LLM chat sessions and instantly `RESUME` with a perfectly curated context window.
+Memoir v2.0 centralizes all state under **`~/.memoir`** (requiring only a single global sandbox permission grant) while partitioning storage deterministically by **Repository → Clone (`<slug>--<sha8>`) → Worktree/Subpath**, and splits responsibilities across three decoupled components in one monorepo:
+1. **`skills/memoir` (Session Compactor):** High-frequency, in-context extraction of typed session fragments into `~/.memoir/.../active/` for instant `CLEAR` / `RESUME` cycles.
+2. **`skills/memoir-wiki` (Knowledge Compiler):** Low-frequency, cumulative synthesis of pre-distilled `memoir` fragments across all clones and subpaths into an interlinked Markdown `wiki/` (`index.md`, `log.md`, `[[wikilinks]]`).
+3. **`dashboard/` (`memoir-ui` Go Web Browser):** Zero-dependency, single-binary HTTP server with `embed.FS` and `fsnotify` SSE live reload for browsing wikis, clones, worktrees, backlinks, and decision supersession chains.
 
-## 2. System Architecture
+---
 
-The Memoir system relies on a dual-component architecture to ensure determinism and portability:
+## 2. Monorepo Architecture
 
-### 2.1 The Execution Engine (Python CLI)
-A zero-dependency (or `uv`-bootstrapped via PEP 723) Python script (`memoir.py`) responsible for path resolution, directory initialization, file archiving, and dynamic resume-prompt generation. It executes natively on the host machine.
+```text
+memoir-skill/
+├── README.md
+├── SPEC.md                                        # Canonical ~/.memoir filesystem & schema contract
+├── system_requirements_document_memoir_skill.md   # This SRD (v2.0)
+├── install.sh                                     # Unified curl-able installer (skills + Go binary)
+├── .github/
+│   └── workflows/
+│       └── release-ui.yml                         # Cross-platform Go binary release workflow
+├── skills/
+│   ├── memoir/                                    # Skill 1: Session compaction & state persistence
+│   │   ├── SKILL.md
+│   │   ├── references/
+│   │   │   └── always-on.md
+│   │   └── scripts/
+│   │       └── memoir.py                          # Zero-dependency stdlib Python 3.11+ CLI
+│   └── memoir-wiki/                               # Skill 2: Karpathy-style cumulative wiki compiler
+│       ├── SKILL.md
+│       └── references/
+│           └── schema.md
+└── dashboard/                                     # Component 3: Local Go web dashboard (memoir-ui)
+    ├── go.mod
+    ├── go.sum
+    ├── main.go
+    └── internal/
+        ├── store/                                 # ~/.memoir scanner, frontmatter & git root checks
+        ├── render/                                # Goldmark Markdown, [[wikilink]], backlinks & graphs
+        └── web/                                   # embed.FS frontend assets + fsnotify SSE hub
+```
 
-### 2.2 The Agentic Engine (LLM Prompt)
-A system prompt (`skills/memoir/SKILL.md`) injected into the active AI CLI. It instructs the LLM on how to extract conversational intent and write strictly formatted Markdown files directly to the absolute path provided by the Python CLI.
+### 2.1 Component Decoupling Rules
+* **No Transcript Parsing:** Neither `memoir` nor `memoir-wiki` reads vendor-specific CLI `.jsonl` logs. `memoir` operates in-context using native agent file-writing tools; `memoir-wiki` reads only structured `memoir` Markdown fragments.
+* **No Daemon Dependency:** `memoir` and `memoir-wiki` MUST function identically whether `memoir-ui` is installed or running.
+* **Zero Working-Tree Pollution:** Neither `memoir` nor `memoir-wiki` writes files into repository working trees or modifies `.gitignore` (unless the user explicitly opts into `sync_to_repo` in `meta.json`).
 
-## 3. Functional Requirements
+---
 
-### 3.1 Storage & Path Resolution
-* **FR-1.1:** The system MUST resolve the storage path (`$BASE_DIR`) using a strict cascade:
-  1. `$MEMOIR_STORE` (Explicit Environment Variable Override)
-  2. Git Root (`<git-root>/` store per FR-1.3)
-  3. Global Fallback, only outside Git and only if `$MEMOIR_USE_GLOBAL=true` (`${XDG_CONFIG_HOME:-~/.config}/memoir/memories/{hash}/`, where `{hash}` is the first 8 hex characters of the SHA-256 of `$PWD`)
-  4. Current Working Directory (`$PWD/` store per FR-1.3)
-* **FR-1.2:** The system MUST maintain two internal directories: `active/` and `archive/`.
-* **FR-1.3 (Store location):** At a git root or the current working directory, the store is `.agents/memoir` if it exists, else `.claude/memoir` if it exists, else `.agents/memoir`. When both exist, the system MUST use `.agents/memoir` and print a warning on stderr, because two stores split memory.
-* **FR-1.4 (Store access):** Every command except `path` MUST create `active/` and `archive/` and probe a write in the store before doing anything else. On failure it MUST print `[Memoir] No write access to <absolute path> (<OS error>)` and exit 3, and MUST NOT fall back to another location. On that message, or on any denied fragment write, the LLM MUST stop, give the user the absolute path and ask them to grant access (or set `$MEMOIR_STORE`). It MUST NOT write the fragment elsewhere or bypass the sandbox on its own, and MUST retry only after the user confirms.
+## 3. Canonical `~/.memoir` Store Layout
 
-### 3.2 CLI Commands (`memoir.py`)
-* **FR-2.1 (`init`):** MUST create the required directory structure (`active/` and `archive/`).
-* **FR-2.2 (`prompt`):** MUST output a system instruction string containing the exact absolute path to the `active/` directory for immediate LLM ingestion.
-* **FR-2.3 (`archive`):** MUST move specified superseded files from `active/` to `archive/`, prepending a `YYYYMMDD-` timestamp to the filename to preserve chronological sorting. With `--superseded`, it MUST archive every active decision named on another active decision's `Supersedes:` line, and MUST be a no-op when there is nothing to archive. For each decision archived via `--superseded`, it MUST write a `Superseded-By:` back-link into the archived copy naming the decision that replaced it (idempotent), and MUST order the write so the back-link lands in the active copy before the move, keeping the operation crash-free (a fragment is never lost, only ever duplicated in the worst case).
-* **FR-2.4 (`resume`):** MUST output the `prompt` instruction (the absolute `active/` path), followed by a copy-paste ready prompt listing the exact absolute paths of all active files, `state-current.md` first, to bootstrap a new LLM session seamlessly.
-* **FR-2.5 (`path`):** MUST print the resolved `$BASE_DIR`, for user inspection.
-* **FR-2.6 (`.gitignore` hint):** Every command except `path` MUST, when the store resolves to a default root store (`.agents/memoir` or `.claude/memoir` under the Git root), add that path with a trailing `/` to the repository `.gitignore` (idempotent, append-only) so local memory stays out of version control and never pollutes pull requests. It MUST skip the hint when `$MEMOIR_STORE` points elsewhere, when the directory is outside Git, and when `git check-ignore` already reports the store ignored. `.gitignore` may itself be protected or read-only, so a failed write MUST NOT block the command: the CLI MUST print the exact line and the `.gitignore` path for the user to add manually, and the LLM MUST pass that request to the user (it MUST NOT bypass the sandbox to write it).
+Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, otherwise `~/.memoir`.
 
-### 3.3 LLM Operations & Commands
-* **FR-3.1:** The LLM MUST enforce strict kebab-case naming for all generated files (e.g., `decision-auth-flow.md`).
-* **FR-3.2 (`/memoir decision [text]`):** MUST extract explicit architectural choices and write to `active/decision-{slug}.md`, recording the decision, why, rejected alternatives, deferred work, and any superseded decision.
-* **FR-3.3 (`/memoir log [text]`):** MUST extract event/milestone logs and write to `active/log-{slug}.md`.
-* **FR-3.4 (`/memoir reference [text]`):** MUST record external context/paths to `active/reference-{slug}.md`. The `Target` MUST be a URL or path the user stated verbatim, or an absolute path verified to exist; the LLM MUST NOT build a path from a bare or relative filename without verifying it, and MUST skip the reference when neither holds.
-* **FR-3.5 (`/memoir state`):** MUST overwrite `active/state-current.md` using a strict, anti-bloat schema limited to 3 bullets per section:
-  * **Goal:** [Current objective]
-  * **Completed:** [What was just done]
-  * **Blocked/Pending:** [Current errors or open threads]
-  * **Next Action:** [The exact next step]
-* **FR-3.6 (`/memoir coach`):** MUST first run capture (FR-3.9), then recommend exactly one outcome, checked in this order:
-  * **CLEAR** when the goal changed, a decision was reversed, the user re-corrected or repeated an instruction two or more times, steering is hard, or the history is noisy with dead ends. When torn between CLEAR and COMPACT, it MUST pick CLEAR.
-  * **COMPACT** when the goal is unchanged with no friction but the history holds working context that is costly to rebuild and cannot be recorded as a fragment (e.g. large files read, a mapped codebase).
-  * **CONTINUE** otherwise.
+```text
+~/.memoir/
+├── config.toml                                    # Optional global configuration
+├── pinned.json                                    # Canonical realpaths of user-pinned non-Git roots
+├── repos/                                         # Scope 1: Git-backed repositories
+│   └── <repo_id>/                                 # e.g., github.com__baankeybihari__memoir-skill
+│       ├── meta.json                              # {"remote": "...", "sync_to_repo": false, "sync_target": "docs/wiki"}
+│       ├── wiki/                                  # Compiled by memoir-wiki (shared across all clones)
+│       │   ├── .ingest-state.json                 # Watermarks of processed fragment paths + sha256
+│       │   ├── index.md                           # Master catalog: one-line summary + link per page
+│       │   ├── log.md                             # Append-only chronological audit trail
+│       │   ├── conventions.md                     # Synthesized from feedback-*.md
+│       │   ├── architecture/
+│       │   ├── decisions/                         # Synthesized from decision-*.md + archive/
+│       │   ├── entities/                          # Synthesized from reference-*.md
+│       │   └── troubleshooting/                   # Synthesized from log-*.md
+│       └── clones/
+│           └── <project-slug>--<sha8>/            # e.g., memoir-skill--a1b2c3d4
+│               ├── clone.json                     # {"root": "/abs/path/to/main/checkout", "last_seen": "..."}
+│               └── paths/
+│                   ├── _main/                     # Primary checkout root
+│                   │   ├── active/
+│                   │   │   ├── state-current.md
+│                   │   │   ├── decision-*.md
+│                   │   │   ├── log-*.md
+│                   │   │   ├── reference-*.md
+│                   │   │   └── feedback-*.md
+│                   │   └── archive/
+│                   └── Worktrees__wt-feature/     # Worktree relative to --show-toplevel
+│                       ├── active/
+│                       └── archive/
+├── pinned/                                        # Scope 2: User-pinned non-Git workspaces
+│   └── <project-slug>--<sha8>/                    # e.g., research--4d5e6f7a
+│       ├── workspace.json                         # {"root": "/abs/path/to/pinned/root", "last_seen": "..."}
+│       ├── wiki/                                  # Compiled by memoir-wiki across all pinned subpaths
+│       └── paths/
+│           ├── _root/                             # Invoked directly at pinned root
+│           │   ├── active/
+│           │   └── archive/
+│           └── sub__dir/                          # Invoked in subdirectory under pinned root
+│               ├── active/
+│               └── archive/
+└── standalone/                                    # Scope 3: Unpinned non-Git directories (flat)
+    └── <project-slug>--<sha8>/                    # e.g., scratch-script--8b9c0d1e
+        ├── active/
+        └── archive/
+```
 
-  Every reply MUST follow the outcome's template in `SKILL.md`, in this order: a `[Memoir Coach] <OUTCOME>` header; a `Why:` list of 1 to 3 bullets, each naming its evidence from the session; exactly one `Captured:` line from FR-3.9 (capture's own reply MUST NOT also be printed); then the next step. CONTINUE MUST give the Next Action and no command. COMPACT MUST give a single-line `/compact <focus prompt>` that names the goal, next action and the absolute active path, is at most 300 characters excluding that path, names the context to keep instead of copying it, and MUST NOT give `/memoir reload`. CLEAR MUST list the files capture wrote and the superseded files (for information only), then output two lines the user can paste into the CLI one at a time: `/clear`, then `/memoir reload`. The LLM MUST NOT generate the resume prompt itself.
-* **FR-3.7 (`/memoir reload`):** MUST run `memoir.py archive --superseded`, then `memoir.py resume`. It MUST take the active path from the resume output and read every file listed, starting with `state-current.md`. It MUST then reply with the restored Goal and Next Action and wait for the user before acting. If no session is recorded, it MUST say so and start fresh.
-* **FR-3.8 (Automatic decisions):** When the user chooses among alternatives or says "decision:" or "let's go with X", the LLM MUST write a decision fragment per FR-3.2 without waiting for `/memoir decision`.
-* **FR-3.9 (`/memoir capture`):** MUST run `memoir.py resume` to get the active path and the existing fragments, then write every decision (FR-3.2), log (FR-3.3), reference (FR-3.4) and feedback (FR-3.10) from the conversation that is not already recorded in an active fragment, and finally overwrite the state file (FR-3.5). It MUST NOT duplicate an item already recorded. When the user corrected the same thing more than once, it MUST record the correction and name the rejected approach: as a decision (in `Alternatives:`) when it is a task or design choice, or as feedback (in `Why:`) when it is a working-style preference. It MUST reply with one summary line, `Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated`, followed by the absolute path of each file written.
-* **FR-3.10 (`/memoir feedback`):** MUST record a durable collaboration or working-style preference to `active/feedback-{slug}.md`: a standing rule the user wants honored across sessions (how to communicate, review or structure work), not a one-off instruction tied to the current task. When the user repeats or re-corrects the same preference, the `Why:` line MUST name the rejected approach (FR-3.9). Feedback is a core fragment type alongside decisions, logs and references, and the capture sweep (FR-3.9) MUST include it. Retention is judgement-based like decisions, logs and references: the system MUST NOT impose an active count cap on feedback.
+---
 
-## 4. Non-Functional Requirements
+## 4. Functional Requirements: `memoir` Core (`skills/memoir`)
 
-### 4.1 Interoperability
-* **NFR-1.1:** The Python CLI MUST run on Python 3.11+ using only standard library modules, or fully encapsulate dependencies using PEP 723 inline metadata for seamless execution via `uv`. The skill prompt MUST invoke the CLI as `python3 <skill-dir>/scripts/memoir.py`, so `uv` stays optional.
-* **NFR-1.2:** The system MUST NOT depend on Model Context Protocol (MCP) servers, background daemons, or specific IDE plugins.
+### 4.1 Storage & Path Resolution
+* **FR-1.1 (Store Root):** Resolve `$STORE_ROOT` from `$MEMOIR_STORE` if non-empty, else `~/.memoir`.
+* **FR-1.2 (Git `repo_id`):** Inside a Git worktree/repo, query `git remote get-url origin`. Normalize into `<host>__<owner>__<repo>` (lowercase, strip `.git` suffix and URL scheme/user, replace `:` and `/` with `__`). If no `origin` remote exists, fall back to `local__<project-slug>--<sha8(realpath(--git-common-dir))>`.
+* **FR-1.3 (Git `clone_id` & `path_key`):**
+  * Compute `MAIN_ROOT = dirname(realpath(git rev-parse --git-common-dir))`.
+  * Compute `project-slug` from `basename(MAIN_ROOT)` (lowercase, non-alphanumeric sequences collapsed to a single `-`, trimmed of leading/trailing `-`).
+  * Compute `sha8 = sha256(MAIN_ROOT)[:8]`.
+  * Set `clone_id = "<project-slug>--<sha8>"`. Persist/update `clone.json` at `<STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/clone.json` with `{"root": MAIN_ROOT, "last_seen": "<ISO-8601>"}`.
+  * Compute `TOPLEVEL = realpath(git rev-parse --show-toplevel)`. If `TOPLEVEL == MAIN_ROOT`, `path_key = "_main"`. Otherwise, if `TOPLEVEL` is inside `MAIN_ROOT`, use `relpath(TOPLEVEL, MAIN_ROOT).replace("/", "__")`; else use `basename(TOPLEVEL)`.
+  * Set `$BASE_DIR = <STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/paths/<path_key>`.
+* **FR-1.4 (Non-Git Pinned & Standalone Resolution):**
+  * Store canonical `realpath` strings in `<STORE_ROOT>/pinned.json` (JSON array of strings).
+  * For non-Git `REAL_CWD = realpath($PWD)`, find all entries `PIN` in `pinned.json` where `REAL_CWD == PIN` or `REAL_CWD` starts with `PIN + "/"`.
+  * **Pinned Match (Longest Prefix Wins):**
+    * `slug = "<slugify(basename(PIN))>--<sha256(PIN)[:8]>"`
+    * `subpath = "_root"` if `REAL_CWD == PIN` else `relpath(REAL_CWD, PIN).replace("/", "__")`
+    * Persist/update `workspace.json` at `<STORE_ROOT>/pinned/<slug>/workspace.json` with `{"root": PIN, "last_seen": "<ISO-8601>"}`.
+    * Set `$BASE_DIR = <STORE_ROOT>/pinned/<slug>/paths/<subpath>`.
+  * **Standalone Fallback (No Pinned Ancestor):**
+    * `slug = "<slugify(basename(REAL_CWD))>--<sha256(REAL_CWD)[:8]>"`
+    * Set `$BASE_DIR = <STORE_ROOT>/standalone/<slug>`.
+* **FR-1.5 (Internal Directories & Write Probe):** Every command except `path`, `pin`, `unpin`, and `gc` MUST ensure `$BASE_DIR/active/` and `$BASE_DIR/archive/` exist and probe a write before proceeding. On failure, print `[Memoir] No write access to <absolute path> (<OS error>)` and exit `3` without falling back to another path. The LLM MUST stop, show the user the absolute path (`~/.memoir`), and ask them to grant directory access before retrying.
+* **FR-1.6 (No Repo `.gitignore` Mutation):** Remove v1 `.gitignore` injection logic; `memoir.py` MUST NOT touch files inside user repositories.
 
-### 4.2 Security & Compliance
-* **NFR-2.1:** All state data MUST remain entirely local to the user's filesystem.
-* **NFR-2.2:** The system MUST NOT require elevated privileges (sudo/root) to execute or modify state.
+### 4.2 CLI Commands (`skills/memoir/scripts/memoir.py`)
+* **FR-2.1 (`init`):** Create `$BASE_DIR/active/` and `$BASE_DIR/archive/` and write scope metadata (`clone.json` or `workspace.json`).
+* **FR-2.2 (`prompt`):** Output the system instruction string containing the exact absolute path to `$BASE_DIR/active/`.
+* **FR-2.3 (`archive`):** Move specified superseded files from `active/` to `archive/`, prepending `YYYYMMDD-`. With `--superseded`, move every active decision named on another active decision's `Supersedes:` line into `archive/`, writing `Superseded-By: <new-file.md>` into the active copy prior to moving so the operation is crash-safe and idempotent.
+* **FR-2.4 (`resume`):** Output the `prompt` instruction followed by a copy-paste ready list of exact absolute paths of all active files, `state-current.md` first.
+* **FR-2.5 (`path`):** Print the resolved `$BASE_DIR` for user inspection.
+* **FR-2.6 (`pin [path]` & `unpin [path]`):** Resolve `realpath(path)` (defaulting to `.`) and add or remove it from `<STORE_ROOT>/pinned.json` (idempotent). Print the resolved pinned workspace slug and path.
+* **FR-2.7 (`gc [--prune]`):** Scan `clone.json` and `workspace.json` across `<STORE_ROOT>/repos/` and `<STORE_ROOT>/pinned/`. Report entries whose `root` directory no longer exists on disk (`--dry-run` default); remove those orphaned staging directories when `--prune` is passed.
 
-### 4.3 Determinism
-* **NFR-3.1:** The LLM MUST NEVER guess paths or use relative directories. It MUST rely exclusively on the absolute path dynamically injected by `memoir.py prompt`.
+### 4.3 LLM Operations & Commands (`skills/memoir/SKILL.md`)
+All v1 fragment schemas and slash commands remain unchanged:
+* **FR-3.1:** Strict lowercase kebab-case filenames (`decision-{slug}.md`, `log-{slug}.md`, `reference-{slug}.md`, `feedback-{slug}.md`, `state-current.md`; collision suffix `-2`, `-3`).
+* **FR-3.2 (`/memoir decision [text]`):** Write `active/decision-{slug}.md` with `Date:`, `Supersedes:`, `Decision:`, `Why:`, `Alternatives:`, `Deferred:`.
+* **FR-3.3 (`/memoir log [text]`):** Write `active/log-{slug}.md` with `Date:`, `Event:`, `Impact:`.
+* **FR-3.4 (`/memoir reference [text]`):** Write `active/reference-{slug}.md` with verified `Target:` and `Why:`.
+* **FR-3.5 (`/memoir state`):** Overwrite `active/state-current.md` (max 3 bullets per section: `Goal`, `Completed`, `Blocked/Pending`, `Next Action`).
+* **FR-3.6 (`/memoir coach`):** Run capture (FR-3.9), then output exactly one template (`CLEAR` > `COMPACT` > `CONTINUE`) with concrete session evidence.
+* **FR-3.7 (`/memoir reload`):** Run `memoir.py archive --superseded`, then `memoir.py resume`, read every listed file starting with `state-current.md`, and report restored Goal and Next Action.
+* **FR-3.8 (Automatic decisions):** Automatically record `decision-{slug}.md` when the user chooses among alternatives or says `"decision:"` or `"let's go with X"`.
+* **FR-3.9 (`/memoir capture`):** Sweep active conversation for unrecorded decisions, logs, references, and feedback, write missing fragments, update `state-current.md`, and print `Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated`.
+* **FR-3.10 (`/memoir feedback [text]`):** Record durable collaboration/style preferences in `active/feedback-{slug}.md`.
 
-## 5. User Workflow Lifecycle
+---
 
-1. **Initialize:** User runs `memoir.py init` in their project.
-2. **Inject Context:** User starts their AI CLI, injecting the absolute path: `claude --append-system-prompt "$(memoir.py prompt)"` (or equivalent).
-3. **Develop:** User works normally, issuing `/memoir decision`, `/memoir log`, or `/memoir state` when milestones are reached.
-4. **Evaluate:** User issues `/memoir coach`. The LLM captures anything unrecorded from the conversation, then recommends a `CLEAR` due to high context density and lists old decisions.
-5. **Reload:** 
-   * User pastes `/clear`, then `/memoir reload`, into the CLI.
-   * Reload archives superseded decisions, loads the active files, and the user continues working with a pristine, focused context window.
-   * Fallback for agents without shell access: user runs `memoir.py resume | pbcopy` (or OS equivalent), clears the chat, and pastes the copied prompt.
+## 5. Functional Requirements: `memoir-wiki` Skill (`skills/memoir-wiki`)
+
+### 5.1 Knowledge Compiler Workflows
+* **FR-4.1 (Scope Resolution):** Resolve the target wiki root for the current working directory:
+  * Git repo → `<STORE_ROOT>/repos/<repo_id>/wiki/`
+  * Pinned workspace → `<STORE_ROOT>/pinned/<slug>/wiki/`
+  * Standalone directory → inform user that wikis require a Git repo or pinned workspace (`memoir.py pin`).
+* **FR-4.2 (`/memoir-wiki ingest`):**
+  * Scan all `clones/*/paths/*/active/` and `archive/` (or `paths/*/active/` and `archive/` for pinned workspaces).
+  * Compare relative fragment paths and SHA-256 content hashes against `wiki/.ingest-state.json`; skip unchanged files.
+  * Synthesize new facts into existing wiki pages (updating superseded decisions, flagging contradictions, and adding `[[wikilinks]]`):
+    * `decision-*.md` & `archive/` → `wiki/decisions/`
+    * `reference-*.md` → `wiki/entities/`
+    * `log-*.md` → `wiki/troubleshooting/`
+    * `feedback-*.md` → `wiki/conventions.md`
+  * Update `wiki/index.md` (one-line summary + link per page) and append `## [YYYY-MM-DD] ingest | <summary>` to `wiki/log.md`.
+  * **Optional Repo Mirror:** If `<STORE_ROOT>/repos/<repo_id>/meta.json` contains `"sync_to_repo": true`, copy `wiki/*.md` and wiki subdirectories (excluding `.ingest-state.json`) into `<MAIN_ROOT>/<sync_target>` (default `docs/wiki/`).
+* **FR-4.3 (`/memoir-wiki query [question]`):** Read `wiki/index.md` first, traverse 2–4 relevant `[[wikilink]]` pages, answer the question, and file valuable multi-page syntheses back into `wiki/` (registering in `index.md` and `log.md`).
+* **FR-4.4 (`/memoir-wiki lint`):** Audit `wiki/` for orphan pages (zero inbound `[[wikilinks]]`), pages omitted from `index.md`, broken `[[wikilinks]]`, contradictory claims, and stale file paths verified against the current checkout; append findings to `wiki/log.md`.
+
+---
+
+## 6. Functional Requirements: `memoir-ui` Go Dashboard (`dashboard/`)
+
+### 6.1 Single-Binary Web Viewer
+* **FR-5.1 (Zero-Dependency Binary):** Build under `dashboard/go.mod` using Go `embed.FS` for all HTML/CSS/JS assets. Support `--port` (default `7337`), `--store` (default `~/.memoir`), and `--open`.
+* **FR-5.2 (Live Reload via SSE):** Watch `$STORE_ROOT` recursively with `fsnotify` and broadcast file-change events over `/events` (Server-Sent Events) so open browser tabs refresh automatically when agents write fragments or wiki pages.
+* **FR-5.3 (Hierarchical Sidebar):** Group top-level navigation into **Repos**, **Pinned Workspaces**, and **Standalone**, expanding into shared **Wiki** (`index.md`, `log.md`, categories) and **Clones → Worktrees** (`state-current.md`, `active/`, `archive/`).
+* **FR-5.4 (Markdown, `[[wikilinks]]`, Backlinks & Supersession Graphs):**
+  * Render Markdown via `goldmark` with clickable `[[wikilink]]` routing.
+  * Parse frontmatter/header fields (`Date`, `Supersedes`, `Superseded-By`, `Target`) into metadata badges.
+  * Compute and render inbound **Backlinks** on every page and visual supersession chains across active and `archive/` `decision-*.md` files.
+* **FR-5.5 (Search & Safe Housekeeping):**
+  * Maintain an in-memory full-text search index refreshed on `fsnotify` events, accessible via `Cmd+K` with scope (`repo`, `pinned`, `standalone`) and type (`decision`, `log`, `reference`, `feedback`, `wiki`) filters.
+  * Badge orphaned clones/workspaces whose `root` path no longer exists on disk and provide a confirmed prune action equivalent to `memoir.py gc --prune`.
+
+---
+
+## 7. Installer & Release Requirements
+
+* **FR-6.1 (`install.sh`):** Idempotent Bash installer supporting `--skills-only`, `--ui-only`, and `--store <path>`:
+  1. Copy `skills/memoir` and `skills/memoir-wiki` into `~/.agents/skills/`.
+  2. Symlink both skills into `~/.claude/skills/`, `~/.codex/skills/`, `~/.pi/agent/skills/`, and `~/.gemini/antigravity/skills/` when those parent directories exist.
+  3. Download the matching OS/arch `memoir-ui` binary from GitHub Releases into `~/.local/bin/memoir-ui` (falling back to `go install ./dashboard` if Go is installed locally).
+  4. Initialize `~/.memoir/` if absent.
+* **FR-6.2 (GitHub Actions Release Workflow):** `.github/workflows/release-ui.yml` triggers on `v*` tags and `dashboard/**` changes, cross-compiling static `memoir-ui` binaries (`darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`) with SHA-256 checksums to GitHub Releases.
+
+---
+
+## 8. Non-Functional Requirements
+
+* **NFR-1.1 (Python Portability):** `memoir.py` MUST run on Python 3.11+ using only standard library modules (`pathlib`, `hashlib`, `json`, `subprocess`, `argparse`, `datetime`, `shutil`).
+* **NFR-1.2 (Go Portability):** `dashboard/` MUST compile to a single static binary with zero runtime dependencies.
+* **NFR-2.1 (Local-First Privacy):** All memory, wiki, and search index data MUST remain strictly local on the user's filesystem.
+* **NFR-3.1 (Path Determinism):** LLMs MUST NEVER guess storage paths; all fragment writes MUST target the exact path returned by `memoir.py prompt`.
