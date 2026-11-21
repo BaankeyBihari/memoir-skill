@@ -1,6 +1,6 @@
 ---
 name: memoir-wiki
-description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query|lint, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, to see how earlier sessions' decisions fit together, or to audit the wiki for broken links, orphan pages, contradictions or stale file references. Not for recording a new decision or session state, which is the memoir skill's job.
+description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query|lint, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, to audit the wiki for broken links, orphan pages, contradictions or stale file references, or to mirror it into the repository (sync_to_repo). Not for recording a new decision or session state, which is the memoir skill's job.
 ---
 
 # Role
@@ -17,7 +17,7 @@ Resolve the wiki from the CLI's output, never from a guessed or relative path (N
 3. The wiki root is `<scope root>/wiki/`. Create it on first write.
 
 # Isolation
-Each scope has exactly one wiki (FR-4.5). Read fragments only under the current scope root and write only under its `wiki/`. Never merge wikis or build a cross-repo catalog. To point at another scope's page, for example when an umbrella pinned workspace needs a repo's decision, use a read-only cross-wiki link `[[<scope>:<page-path>]]`. Never edit, copy or index the other wiki.
+Each scope has exactly one wiki (FR-4.5). Read fragments only under the current scope root and write only under its `wiki/`, apart from the opt-in repository mirror in ingest step 10. Never merge wikis or build a cross-repo catalog. To point at another scope's page, for example when an umbrella pinned workspace needs a repo's decision, use a read-only cross-wiki link `[[<scope>:<page-path>]]`. Never edit, copy or index the other wiki.
 
 # Store Access
 If a read or write under the store is denied, show the absolute path and ask the user to grant access to the store root (default `~/.memoir`, or `$MEMOIR_STORE`). In Claude Code, use `/add-dir` with the absolute store root. Retry after access is granted.
@@ -66,7 +66,35 @@ Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: th
 6. For a `missing` fragment that isn't a move, keep the wiki content, because knowledge outlives a pruned clone. Drop only its watermark entry.
 7. Update `index.md` so every page appears once, with a one-line summary.
 8. Append one entry to `log.md` (create the file with `# Wiki Log` if it's absent): `## [YYYY-MM-DD] ingest | <n> fragments: <counts by type>`, with one bullet per page created or updated and one per contradiction.
-9. Write `.ingest-state.json` last. Keep the unchanged entries, set the hash and pages for each `new` and `changed` fragment, and drop each `missing` one. Writing it last means an interrupted ingest is simply redone next time and never skips a fragment.
+9. Write `.ingest-state.json` after the wiki pages. Keep the unchanged entries, set the hash and pages for each `new` and `changed` fragment, and drop each `missing` one. Writing it last means an interrupted ingest is simply redone next time and never skips a fragment.
+10. Mirror to the repository if the user opted in (repositories only, because only they have `meta.json`). When `<scope root>/meta.json` has `"sync_to_repo": true`, run this from inside the checkout:
+
+        python3 - "<scope root>" <<'PY'
+        import json, shutil, subprocess, sys
+        from pathlib import Path, PurePosixPath
+        scope = Path(sys.argv[1])
+        meta = scope / "meta.json"
+        config = json.loads(meta.read_text()) if meta.is_file() else {}
+        if config.get("sync_to_repo") is not True:
+            print("sync off")
+            sys.exit()
+        target = PurePosixPath(config.get("sync_target") or "docs/wiki")
+        if target.is_absolute() or ".." in target.parts or not target.parts:
+            sys.exit(f"refusing sync_target {str(target)!r}: must be a relative path inside the repository")
+        common = subprocess.check_output(["git", "rev-parse", "--git-common-dir"], text=True).strip()
+        dest = Path(common).resolve().parent / target
+        wiki = scope / "wiki"
+        pages = {p.relative_to(wiki) for p in wiki.rglob("*.md")}
+        for rel in sorted(pages):
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(wiki / rel, dest / rel)
+        print(f"synced {len(pages)} pages to {dest}")
+        for extra in sorted(p.relative_to(dest) for p in dest.rglob("*.md")):
+            if extra not in pages:
+                print(f"not in wiki: {dest / extra}")
+        PY
+
+    It copies every `wiki/**/*.md` to `<MAIN_ROOT>/<sync_target>` (default `docs/wiki`), where `MAIN_ROOT` is the main checkout above `git rev-parse --git-common-dir`, so a worktree mirrors into the main checkout as well. `.ingest-state.json` is not Markdown and never leaves the store. It refuses an absolute `sync_target` or one containing `..`, because this is the only step allowed to write into a working tree, and only inside it. It overwrites matching files and deletes nothing: a `not in wiki:` line is a file the user may want to remove. Cross-wiki `[[<scope>:<page>]]` links are copied verbatim and resolve only in the store. Add a `synced <n> pages to <dest>` bullet to this ingest's log entry, and pass any `not in wiki:` lines on to the user. `sync off` means the mirror is disabled, so do nothing.
 
 ## `/memoir-wiki query [question]`
 Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
