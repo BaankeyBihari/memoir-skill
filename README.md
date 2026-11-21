@@ -14,7 +14,7 @@ Full specifications: [system_requirements_document_memoir_skill.md](system_requi
 
 Requires Python 3.11+. [`uv`](https://docs.astral.sh/uv/) is optional; Go 1.23+ is only needed if building `memoir-ui` from source when no release binary matches.
 
-**Unified installer** (installs both skills to `~/.agents/skills/`, symlinks detected agent CLIs, and installs `memoir-ui` to `~/.local/bin/memoir-ui` with SHA-256 verification):
+**Unified installer** (installs both skills to `~/.agents/skills/`, symlinks detected agent CLIs, configures store permissions for `~/.memoir` in detected CLI configs, and installs `memoir-ui` to `~/.local/bin/memoir-ui` with SHA-256 verification):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BaankeyBihari/memoir-skill/main/scripts/install.sh | bash
