@@ -70,6 +70,23 @@ with runs outside `[a-z0-9]` replaced by one hyphen and outer hyphens trimmed
   Hash the pinned root and use `_root` or the relative subpath joined with
   `__`. Without a match, hash the current directory and use the flat scope.
 
+## Wiki scopes and links
+
+Each Git repository has one wiki at `repos/<repo_id>/wiki/`, shared by all of
+its clones and worktrees. Each pinned workspace has one wiki at
+`pinned/<slug>/wiki/`, shared by all of its subpaths. Standalone directories
+have no wiki. Wikis are never merged into a global cross-repo wiki: a wiki is
+compiled only from its own scope's fragments, and tools write only to it.
+
+A local link is `[[<page-path>]]`, the page path relative to the wiki root
+without `.md` (e.g. `[[decisions/use-env-vars]]`), optionally with a label as
+`[[<page-path>|<label>]]`. A cross-wiki link is `[[<scope>:<page-path>]]`,
+where `<scope>` is a `repo_id` or a pinned slug. Scope IDs never contain `:`,
+so the first `:` separates scope from page. It resolves to
+`repos/<scope>/wiki/<page-path>.md`, else `pinned/<scope>/wiki/<page-path>.md`.
+Cross-wiki links are read-only pointers: they never add entries to the other
+wiki's `index.md` or edit its pages.
+
 ## JSON records
 
 All four files are UTF-8 JSON. Missing pinned.json means an empty array.
