@@ -79,16 +79,14 @@ For agents without shell access, run `memoir.py resume | pbcopy`, clear the chat
 
 ## Store location
 
-First match wins:
+The default store is `~/.memoir`. Set `MEMOIR_STORE` to override its root. Run
+`memoir.py path` in your working directory to find its fragment store.
+Grant your agent write access to the store root if the CLI reports exit code 3.
+See [SPEC.md](SPEC.md) for the project and worktree layout.
 
-1. `$MEMOIR_STORE`
-2. Git root: `<git-root>/.agents/memoir/` (or `.claude/memoir/` if only that exists)
-3. Outside Git, with `MEMOIR_USE_GLOBAL=true`: `${XDG_CONFIG_HOME:-~/.config}/memoir/memories/{hash}/`
-4. `$PWD/.agents/memoir/` (same `.claude/memoir/` rule)
-
-For a default Git-root store, every `memoir.py` command except `path` adds the store (`.agents/memoir/` or `.claude/memoir/`) to the repository `.gitignore` (idempotent, append-only) so local memory stays out of version control and never pollutes pull requests. It is skipped when `$MEMOIR_STORE` points elsewhere, outside Git, or when Git already ignores the store. If `.gitignore` is protected, memoir carries on and prints the line for you to add by hand.
-
-Every command first checks it can write to the store. If not (for example the Git root is outside your agent's sandbox), it prints `No write access to <path>` and exits 3; grant the agent access to that path (in Claude Code, `/add-dir <path>`) and retry. Memoir never falls back to another location.
+Legacy fragments remain in their original directories. To resume a v1 session,
+copy its active and archive fragments into the corresponding directories under
+the path printed by `memoir.py path`, checking for existing filenames before copying.
 
 ## Test
 
