@@ -1,5 +1,6 @@
 """Installer tests for scripts/install.sh. Run: python3 scripts/test_install.py"""
 import hashlib
+import io
 import json
 import os
 import platform
@@ -28,12 +29,16 @@ def expected_ui_asset() -> str:
     return f"memoir-ui-{os_name}-{arch}"
 
 
-def build_mock_release(release_dir: Path, ui_bytes: bytes = b"binary", tamper_sums: bool = False) -> None:
+def build_mock_release(release_dir: Path, ui_bytes: bytes = b"binary", tamper_sums: bool = False, version: str = "") -> None:
     release_dir.mkdir(parents=True, exist_ok=True)
     skills_tar = release_dir / "memoir-skills.tar.gz"
     with tarfile.open(skills_tar, "w:gz") as tf:
         for name in ("memoir", "memoir-wiki"):
             tf.add(REPO_ROOT / "skills" / name, arcname=name)
+            if version:  # release.yml stamps each skill folder
+                info = tarfile.TarInfo(f"{name}/VERSION")
+                info.size = len(version) + 1
+                tf.addfile(info, io.BytesIO(f"{version}\n".encode()))
 
     asset_name = expected_ui_asset()
     ui_file = release_dir / asset_name
@@ -87,11 +92,16 @@ class TestInstaller(unittest.TestCase):
                 parent.mkdir(parents=True)
             store = tmp_path / "custom store"
             for _ in range(2):
-                subprocess.run(
+                res = subprocess.run(
                     [str(SCRIPT), "--skills-only", "--store", str(store)],
                     env=env,
                     check=True,
+                    capture_output=True,
+                    text=True,
                 )
+                # A checkout has no VERSION; a stamp left by an earlier release must not survive.
+                (home / ".agents/skills/memoir/VERSION").write_text("2026.1.1\n")
+            self.assertEqual(res.stdout.splitlines()[-1], "Installed memoir dev, memoir-wiki dev")
             for parent in parents:
                 for name in ("memoir", "memoir-wiki"):
                     self.assertEqual(
@@ -311,7 +321,8 @@ class TestInstaller(unittest.TestCase):
                 "MEMOIR_STORE": "",
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
             }
-            subprocess.run([str(SCRIPT), "--ui-only"], env=env, check=True)
+            res = subprocess.run([str(SCRIPT), "--ui-only"], env=env, check=True, capture_output=True, text=True)
+            self.assertEqual(res.stdout.splitlines()[-1], "Installed memoir-ui unknown")  # mock binary has no --version
             self.assertEqual((home / ".local/bin/memoir-ui").read_bytes(), b"verified-binary")
             self.assertFalse((home / ".claude/settings.json").exists())
             self.assertFalse((home / ".codex/config.toml").exists())
@@ -344,7 +355,8 @@ class TestInstaller(unittest.TestCase):
             shutil.copy2(SCRIPT, standalone_script)
 
             release_dir = tmp_path / "release"
-            build_mock_release(release_dir, ui_bytes=b"ui-2026.11.1")
+            ui_bytes = b"#!/bin/sh\necho 2026.11.1\n"
+            build_mock_release(release_dir, ui_bytes=ui_bytes, version="2026.11.1")
 
             bin_dir = tmp_path / "bin"
             bin_dir.mkdir()
@@ -362,14 +374,20 @@ class TestInstaller(unittest.TestCase):
                 "MEMOIR_STORE": "",
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
             }
-            subprocess.run(
+            res = subprocess.run(
                 [str(standalone_script), "--version", "2026.11.1"],
                 env=env,
                 check=True,
+                capture_output=True,
+                text=True,
             )
             self.assertTrue((home / ".agents/skills/memoir/SKILL.md").is_file())
             self.assertTrue((home / ".agents/skills/memoir-wiki/SKILL.md").is_file())
-            self.assertEqual((home / ".local/bin/memoir-ui").read_bytes(), b"ui-2026.11.1")
+            self.assertEqual((home / ".local/bin/memoir-ui").read_bytes(), ui_bytes)
+            self.assertEqual(
+                res.stdout.splitlines()[-1],
+                "Installed memoir 2026.11.1, memoir-wiki 2026.11.1, memoir-ui 2026.11.1",
+            )
 
     def test_ui_only_with_checksum_verification(self):
         with tempfile.TemporaryDirectory() as tmp:

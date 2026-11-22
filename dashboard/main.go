@@ -234,7 +234,7 @@ func dashboard(args []string) error {
 	} else {
 		if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
 			_ = conn.Close()
-			return fmt.Errorf("port %d is in use by another program", *port)
+			return fmt.Errorf("port %d is in use by another program (maybe an older memoir-ui); stop it or pass --port <other>", *port)
 		}
 		exe, err := os.Executable()
 		if err != nil {

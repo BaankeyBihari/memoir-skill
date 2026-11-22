@@ -145,4 +145,15 @@ func TestLifecycle(t *testing.T) {
 	if out, err = run("shutdown"); err != nil || !strings.Contains(out, "not running") {
 		t.Fatalf("shutdown when stopped: %v\n%s", err, out)
 	}
+
+	// Another program on the port: dashboard refuses and says how to recover.
+	other, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	go func() { _ = http.Serve(other, http.NotFoundHandler()) }()
+	if out, err = run("dashboard"); err == nil || !strings.Contains(out, "port "+port+" is in use by another program") || !strings.Contains(out, "stop it or pass --port") {
+		t.Fatalf("dashboard on a foreign port should fail with a hint: %v\n%s", err, out)
+	}
 }
