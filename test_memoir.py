@@ -135,6 +135,12 @@ with tempfile.TemporaryDirectory() as raw:
     assert (legacy / "active" / "state-current.md").exists()  # copied, not moved
     assert str(base / "active" / "state-current.md") in out.stdout
 
+    (base / "active" / "state-current.md").write_text("# Session State\nUpdated later\n")  # v2 evolves after the copy
+    (legacy / "active" / "decision-done.md").write_text("done\n")
+    (base / "archive" / "20260102-decision-done.md").write_text("done\n")  # copied, then archived in v2
+    out = cli(repo, "resume")
+    assert f"is already migrated to {base}; delete {legacy}" in out.stderr and "not migrated" not in out.stderr, out
+
     (legacy / "active" / "decision-late.md").write_text("late\n")
     out = cli(repo, "resume")
     assert "Migrated" not in out.stderr and "not migrated" in out.stderr, out  # no merge into a used scope

@@ -14,7 +14,7 @@ Write only to the absolute active directory printed by `memoir.py prompt`. Don't
 
 ## Store Access
 Memoir keeps project scopes under one global store. If the CLI reports `No write access` or a fragment write is denied, show the absolute path from the error. Ask the user to grant access to the store root (default `~/.memoir`, or `$MEMOIR_STORE`). In Claude Code, use `/add-dir` with the absolute store root. Retry the same command after access is granted and use its printed path.
-If the CLI prints `Migrated`, `not migrated` or `is a v1 store`, relay that line to the user verbatim. Never delete the old store yourself.
+If the CLI prints `Migrated`, `already migrated`, `not migrated` or `is a v1 store`, relay that line to the user verbatim. Never delete the old store yourself.
 
 ## Fragment Taxonomy & Formatting
 Filenames are lowercase kebab-case with no underscores, spaces or uppercase letters (e.g. `decision-use-env-vars.md`), because `archive` and the `Supersedes:` matcher only recognize that shape; any other name can never be archived or superseded. Use exactly these prefixes:
