@@ -1,0 +1,51 @@
+repos:
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: >-
+          bash -c 'unformatted=$(gofmt -l dashboard);
+          if [ -n "$unformatted" ]; then echo "Unformatted files: $unformatted"; exit 1; fi'
+        language: system
+        files: ^dashboard/.*\.go$
+        pass_filenames: false
+      - id: go-vet
+        name: go vet
+        entry: bash -c 'cd dashboard && go vet ./...'
+        language: system
+        files: ^dashboard/.*\.go$
+        pass_filenames: false
+      - id: golangci-lint
+        name: golangci-lint
+        entry: bash -c 'cd dashboard && golangci-lint run ./...'
+        language: system
+        files: ^dashboard/.*\.go$
+        pass_filenames: false
+      - id: ruff
+        name: ruff
+        entry: ruff check
+        language: system
+        files: ^(skills/memoir/scripts/memoir\.py|test_memoir\.py|scripts/test_install\.py)$
+      - id: shellcheck
+        name: shellcheck
+        entry: bash -c 'bash -n scripts/install.sh && shellcheck scripts/install.sh'
+        language: system
+        files: ^scripts/install\.sh$
+        pass_filenames: false
+      - id: markdownlint-cli2
+        name: markdownlint-cli2
+        entry: markdownlint-cli2
+        language: system
+        files: \.md$
+        exclude: ^(\.claude/|\.agents/|\.pytest_cache/|dist/|evals/fixtures/|memoir-workspace/|node_modules/)
+      - id: typos
+        name: typos
+        entry: typos
+        language: system
+        pass_filenames: false
+      - id: skills-validate
+        name: skills validate
+        entry: mise run lint:skills
+        language: system
+        files: ^(skills/|scripts/install\.sh$)
+        pass_filenames: false

@@ -11,6 +11,7 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - `dashboard/`: zero-dependency single-binary Go web browser (`memoir-ui`) with `embed.FS` and `fsnotify` SSE live reload.
 - `scripts/install.sh`: unified installer for both skills and `memoir-ui`.
 - `mise.toml`: repo build, test, and lint task runner configuration.
+- `.pre-commit-config.yaml`: local pre-commit hook configuration (install with `mise run hooks`).
 - `test_memoir.py`: self-check for `memoir.py` and `README.md` / `SKILL.md` invariants.
 - `scripts/test_install.py`: stdlib test suite for `scripts/install.sh`.
 
