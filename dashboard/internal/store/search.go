@@ -70,6 +70,7 @@ func (idx *SearchIndex) Rebuild() error {
 		return nil
 	}
 
+	members := pinMembers(idx.storeRoot)
 	next := make([]indexedDoc, 0)
 	for _, spec := range []struct {
 		dir   string
@@ -112,9 +113,13 @@ func (idx *SearchIndex) Rebuild() error {
 			if len(parts) >= 2 {
 				scopeID = parts[1]
 			}
-			scopeLabel := scopeID
+			scope, scopeLabel := spec.scope, scopeID
 			if spec.scope == "repo" {
 				scopeLabel = strings.ReplaceAll(scopeID, "__", "/")
+			}
+			// A pinned group's member fragments live in standalone/ but search under the group.
+			if m, ok := members[scopeID]; ok && spec.scope == "standalone" {
+				scope, scopeID, scopeLabel = "pinned", m.Slug, m.Slug
 			}
 
 			body := string(raw)
@@ -125,7 +130,7 @@ func (idx *SearchIndex) Rebuild() error {
 				Path:       relSlash,
 				Name:       name,
 				Title:      title,
-				Scope:      spec.scope,
+				Scope:      scope,
 				ScopeID:    scopeID,
 				ScopeLabel: scopeLabel,
 				Type:       kind,

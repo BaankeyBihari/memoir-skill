@@ -68,3 +68,26 @@ func TestSearchIndexQueryFiltersAndConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestSearchIndexTagsGroupMembersAsPinned(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "pinned.json"), `["/w"]`)
+	mustWriteFile(t, filepath.Join(root, "pinned", "w--11111111", "workspace.json"), `{"root":"/w"}`)
+	mustWriteFile(t, filepath.Join(root, "standalone", "a--22222222", "scope.json"), `{"root":"/w/a"}`)
+	mustWriteFile(t, filepath.Join(root, "standalone", "a--22222222", "active", "log-member.md"), "# Member\nEvent: grouped note.\n")
+	mustWriteFile(t, filepath.Join(root, "standalone", "x--33333333", "scope.json"), `{"root":"/x"}`)
+	mustWriteFile(t, filepath.Join(root, "standalone", "x--33333333", "active", "log-loose.md"), "# Loose\nEvent: loose note.\n")
+
+	idx := NewSearchIndex(root)
+	if err := idx.Rebuild(); err != nil {
+		t.Fatalf("Rebuild failed: %v", err)
+	}
+	pinned := idx.Query("note", "pinned", "", 20)
+	if len(pinned) != 1 || pinned[0].Name != "log-member.md" || pinned[0].ScopeID != "w--11111111" ||
+		pinned[0].Path != "standalone/a--22222222/active/log-member.md" {
+		t.Fatalf("expected member note under pinned group, got %+v", pinned)
+	}
+	if loose := idx.Query("note", "standalone", "", 20); len(loose) != 1 || loose[0].Name != "log-loose.md" {
+		t.Fatalf("expected only the ungrouped note under standalone, got %+v", loose)
+	}
+}
