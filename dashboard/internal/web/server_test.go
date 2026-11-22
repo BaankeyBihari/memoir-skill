@@ -73,18 +73,30 @@ func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
 		`value="solarized-light"`,
 		`value="sky-light"`,
 		`value="zinc-light"`,
+		`id="sidebarResizer"`,
+		`memoir-ui.sidebarWidth`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index.html missing %q", want)
 		}
 	}
 
-	for _, asset := range []string{"/assets/app.css", "/assets/app.js"} {
+	assetChecks := map[string][]string{
+		"/assets/app.css": {".sidebar-resizer", "--sidebar-width"},
+		"/assets/app.js":  {"initSidebarResize", "formatTreeFileLabel"},
+	}
+	for asset, markers := range assetChecks {
 		areq := httptest.NewRequest(http.MethodGet, asset, nil)
 		arec := httptest.NewRecorder()
 		h.ServeHTTP(arec, areq)
 		if arec.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d, want 200", asset, arec.Code)
+		}
+		assetBody := arec.Body.String()
+		for _, want := range markers {
+			if !strings.Contains(assetBody, want) {
+				t.Fatalf("%s missing %q", asset, want)
+			}
 		}
 	}
 
