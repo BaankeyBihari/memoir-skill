@@ -28,9 +28,9 @@ repos:
         files: ^(skills/memoir/scripts/memoir\.py|test_memoir\.py|scripts/test_install\.py)$
       - id: shellcheck
         name: shellcheck
-        entry: bash -c 'bash -n scripts/install.sh && shellcheck scripts/install.sh'
+        entry: mise run lint:shell
         language: system
-        files: ^scripts/install\.sh$
+        files: ^scripts/.*\.sh$
         pass_filenames: false
       - id: markdownlint-cli2
         name: markdownlint-cli2

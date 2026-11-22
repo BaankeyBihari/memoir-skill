@@ -23,6 +23,6 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - All memory, wiki, and search index data MUST remain strictly local on the user's filesystem (NFR-2.1).
 - Fragment filenames are lowercase kebab-case: `decision-*`, `log-*`, `reference-*`, or `feedback-*` with an `.md` extension, plus the single `state-current.md`.
 - The LLM never guesses storage paths. It uses only the exact absolute path printed by `memoir.py` (NFR-3.1).
-- Releases use bare, zero-padded, 1-based CalVer tags (`YYYY.MM.N`, e.g., `2026.11.1`) via `.github/workflows/release.yml`.
+- Releases use bare, 1-based, non-zero-padded CalVer tags (`YYYY.M.N`, e.g., `2026.11.3`, `2027.1.1`), computed by `scripts/next-version.sh` in `.github/workflows/release.yml` (`gh workflow run release.yml --ref main`). Never push release tags by hand or add version fields to skills or `plugin.json`.
 - Run `mise run lint`, `mise run test`, and `mise run build` (or `python3 test_memoir.py`, `python3 scripts/test_install.py`, and `cd dashboard && go test -race ./...`) before calling a change done.
 - Never add AI attribution to commits, PRs, issues, or files.

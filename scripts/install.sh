@@ -12,9 +12,9 @@ while (( $# )); do
         --ui-only) skills=false ;;
         --store) [[ -n ${2:-} ]] || { echo "--store requires a path" >&2; exit 2; }; store=$2; shift ;;
         --version)
-            [[ -n ${2:-} ]] || { echo "--version requires a YYYY.MM.N tag" >&2; exit 2; }
-            if [[ ! $2 =~ ^[0-9]{4}\.(0[1-9]|1[0-2])\.[1-9][0-9]*$ ]]; then
-                echo "Invalid --version '$2': expected YYYY.MM.N (e.g. 2026.11.1)" >&2
+            [[ -n ${2:-} ]] || { echo "--version requires a YYYY.M.N tag" >&2; exit 2; }
+            if [[ ! $2 =~ ^[0-9]{4}\.([1-9]|1[0-2])\.[1-9][0-9]*$ ]]; then
+                echo "Invalid --version '$2': expected YYYY.M.N (e.g. 2026.11.1, 2027.1.1)" >&2
                 exit 2
             fi
             version=$2
