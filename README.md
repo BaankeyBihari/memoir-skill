@@ -84,6 +84,17 @@ memoir-ui --port 7337 --store ~/.memoir --open
 ```
 
 - Flags: `--port` (default `7337`), `--store` (defaults to `$MEMOIR_STORE` or `~/.memoir`), `--open`, `--version`.
+- Subcommands (each takes `--port`):
+
+| Command | Effect |
+|---|---|
+| `memoir-ui dashboard` | Start the server in the background (log in your user cache dir under `memoir-ui/`) unless one already runs, then open it in the browser |
+| `memoir-ui status` | Print URL, PID, version, and store; exit 1 when not running |
+| `memoir-ui shutdown` | Stop the running server (sends `SIGTERM`; there is no HTTP shutdown endpoint) |
+| `memoir-ui check-update` | Compare `memoir-ui` and the installed skills with the latest release and print the installer command when behind (the only network call, made only on request) |
+| `memoir-ui help` | Show usage |
+
+- Set `$BROWSER` to choose which browser `--open` and `dashboard` launch.
 - Features: hierarchical Repos / Pinned Workspaces / Standalone navigation, live `fsnotify` SSE reload (`/events`), Goldmark Markdown with clickable `[[page]]` and `[[scope:page]]` links, inbound backlinks, visual decision supersession chains, `Cmd+K` full-text search with scope/type filters, 7 color themes, and confirmed pruning for orphaned clones/workspaces.
 
 ## Always on
