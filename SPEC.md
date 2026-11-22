@@ -33,19 +33,14 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │                   └── Worktrees__wt-feature/     # Worktree relative to --show-toplevel
 │                       ├── active/
 │                       └── archive/
-├── pinned/                                        # Scope 2: User-pinned non-Git workspaces
+├── pinned/                                        # Scope 2: Groups over standalone scopes (no fragments)
 │   └── <project-slug>--<sha8>/                    # e.g., research--4d5e6f7a
 │       ├── workspace.json                         # {"root": "/abs/path/to/pinned/root", "last_seen": "..."}
-│       ├── wiki/                                  # Compiled by memoir-wiki across all pinned subpaths
-│       └── paths/
-│           ├── _root/                             # Invoked directly at pinned root
-│           │   ├── active/
-│           │   └── archive/
-│           └── sub__dir/                          # Invoked in subdirectory under pinned root
-│               ├── active/
-│               └── archive/
-└── standalone/                                    # Scope 3: Unpinned non-Git directories (flat)
+│       ├── wiki/                                  # Compiled by memoir-wiki across all group members
+│       └── paths/                                 # Legacy pre-group fragments, copied out lazily
+└── standalone/                                    # Scope 3: Every non-Git directory (flat), pinned or not
     └── <project-slug>--<sha8>/                    # e.g., scratch-script--8b9c0d1e
+        ├── scope.json                             # {"root": "/abs/path/to/directory", "last_seen": "..."}
         ├── active/
         └── archive/
 ```
@@ -66,22 +61,28 @@ with runs outside `[a-z0-9]` replaced by one hyphen and outer hyphens trimmed
   worktree's relative path for nested worktrees, or its basename for external
   worktrees. Join path components with `__`. Invocation from a Git subdirectory
   uses its checkout's key.
-* Outside Git, choose the longest pinned ancestor by directory component.
-  Hash the pinned root and use `_root` or the relative subpath joined with
-  `__`. Without a match, hash the current directory and use the flat scope.
+* Outside Git, always hash the current directory and use its flat
+  `standalone/` scope, recording the directory in `scope.json`. A pin is a
+  group, not a location: the longest pinned ancestor by directory component
+  names the group, and its members are the standalone scopes whose
+  `scope.json` root has that pin as longest ancestor. Group reads (`resume`,
+  `archive --superseded`, `scope`, wiki ingest) flatten members' fragments,
+  except `state-current.md`, which stays per directory. Unpinning moves
+  nothing.
 * v1 stores (`<toplevel-or-cwd>/.agents/memoir`, `.claude/memoir`,
   `~/.config/memoir/memories/<sha8>`) are copied into an empty resolved scope
-  on first use and left in place (SRD FR-1.7). The current directory's
-  standalone scope is copied the same way once that directory is pinned or
-  becomes a Git repository. A store root containing
+  on first use and left in place (SRD FR-1.7). Legacy pre-group
+  `pinned/<slug>/paths/<key>` fragments are copied into the directory's
+  standalone scope, and a standalone scope into its repository scope after
+  `git init`, the same way. A store root containing
   `active/` is a v1 base directory and is rejected (SRD FR-1.8).
 
 ## Wiki scopes and links
 
 Each Git repository has one wiki at `repos/<repo_id>/wiki/`, shared by all of
-its clones and worktrees. Each pinned workspace has one wiki at
-`pinned/<slug>/wiki/`, shared by all of its subpaths. Standalone directories
-have no wiki. Wikis are never merged into a global cross-repo wiki: a wiki is
+its clones and worktrees. Each pinned group has one wiki at
+`pinned/<slug>/wiki/`, shared by all of its members. Ungrouped standalone
+directories have no wiki. Wikis are never merged into a global cross-repo wiki: a wiki is
 compiled only from its own scope's fragments, and tools write only to it.
 
 A local link is `[[<page-path>]]`, the page path relative to the wiki root
@@ -95,11 +96,12 @@ wiki's `index.md` or edit its pages.
 
 ## JSON records
 
-All four files are UTF-8 JSON. Missing pinned.json means an empty array.
+All five files are UTF-8 JSON. Missing pinned.json means an empty array.
 
 | File | JSON shape | Meaning |
 | --- | --- | --- |
 | clone.json | `{"root":"/main/checkout","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical main checkout and ISO-8601 timestamp |
+| scope.json | `{"root":"/directory","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical non-Git directory of a standalone scope and ISO-8601 timestamp |
 | workspace.json | `{"root":"/workspace","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical pinned root and ISO-8601 timestamp |
 | meta.json | `{"remote":"https://host/owner/repo","sync_to_repo":false,"sync_target":"docs/wiki"}` | Optional repo configuration. Remote is a string, mirror flag a boolean (default false), target a repo-relative directory string (default docs/wiki). |
 | pinned.json | `["/absolute/workspace"]` | Array of unique canonical absolute directory strings |

@@ -153,28 +153,78 @@ with tempfile.TemporaryDirectory() as raw:
     assert out.returncode == 0 and "Migrated 1 files" in out.stderr, out
     assert (Path(cli(plain, "path").stdout.strip()) / "active" / "log-x.md").exists()
 
-    # --- FR-2.6: pinning carries each folder's standalone notes into the workspace, copy-only ---
+    # --- FR-1.4/FR-2.6: a pin groups standalone scopes; fragments never move ---
     ws = tmp / "ws"
-    (ws / "sub").mkdir(parents=True)
-    old = {}
+    (ws / "sub" / "deep").mkdir(parents=True)
+    scope = {}
     for folder in (ws, ws / "sub"):
-        old[folder] = Path(cli(folder, "path").stdout.strip())
-        assert "/standalone/" in str(old[folder]), old[folder]
+        scope[folder] = Path(cli(folder, "path").stdout.strip())
+        assert "/standalone/" in str(scope[folder]), scope[folder]
         cli(folder, "init")
-        (old[folder] / "active" / "log-before-pin.md").write_text(f"{folder.name}\n")
+        (scope[folder] / "active" / "state-current.md").write_text(f"# {folder.name}\n")
+        (scope[folder] / "active" / f"log-{folder.name}.md").write_text("x\n")
+    (scope[ws] / "active" / "decision-old.md").write_text("Supersedes: none\n")
     out = cli(ws, "pin")
     assert out.returncode == 0 and "/pinned/" in out.stdout, out
-    for folder, key in ((ws, "_root"), (ws / "sub", "sub")):
-        base = Path(cli(folder, "path").stdout.strip())
-        assert base.name == key and "/pinned/" in str(base), base
-        out = cli(folder, "resume")
-        assert f"Migrated 1 files from {old[folder]} to {base}" in out.stderr, out
-        assert (base / "active" / "log-before-pin.md").read_text() == f"{folder.name}\n"
-        assert (old[folder] / "active" / "log-before-pin.md").exists()  # copied, not moved
-        assert "already migrated" in cli(folder, "resume").stderr
+    group = Path(out.stdout.split(" (")[0])
+    assert Path(cli(ws / "sub", "path").stdout.strip()) == scope[ws / "sub"]  # still standalone
+
+    listed = cli(ws / "sub", "resume").stdout.splitlines()
+    files = [line.split(". ", 1)[1] for line in listed if line[:1].isdigit()]
+    assert files[0] == str(scope[ws / "sub"] / "active" / "state-current.md"), files
+    assert str(scope[ws] / "active" / "log-ws.md") in files and str(scope[ws] / "active" / "decision-old.md") in files
+    assert str(scope[ws] / "active" / "state-current.md") not in files  # state stays per folder
+
+    out = cli(ws / "sub", "scope").stdout.splitlines()
+    assert out[0] == str(group) and sorted(out[1:]) == sorted(map(str, scope.values())), out
+
+    # A decision in sub supersedes one in ws: it is archived inside ws's own scope.
+    (scope[ws / "sub"] / "active" / "decision-new.md").write_text("Supersedes: decision-old.md\n")
+    out = cli(ws / "sub", "archive", "--superseded")
+    assert out.returncode == 0 and "Archived 1 files" in out.stdout, out
+    assert not (scope[ws] / "active" / "decision-old.md").exists()
+    assert any((scope[ws] / "archive").glob("*-decision-old.md"))
+    # The superseding decision's own scope wins when both hold the name.
+    for folder in (ws, ws / "sub"):
+        (scope[folder] / "active" / "decision-dup.md").write_text("Supersedes: none\n")
+    (scope[ws / "sub"] / "active" / "decision-newer.md").write_text("Supersedes: decision-dup.md\n")
+    assert cli(ws, "archive", "--superseded").returncode == 0
+    assert (scope[ws] / "active" / "decision-dup.md").exists() and not (scope[ws / "sub"] / "active" / "decision-dup.md").exists()
+
+    # A nested pin takes sub (and its own subfolders) out of the ws group.
+    deep = Path(cli(ws / "sub" / "deep", "path").stdout.strip())
+    cli(ws / "sub" / "deep", "init")
+    assert cli(ws / "sub", "pin").returncode == 0
+    assert str(scope[ws / "sub"] / "active" / "log-sub.md") not in cli(ws, "resume").stdout
+    assert str(scope[ws / "sub"] / "active" / "log-sub.md") in cli(ws / "sub" / "deep", "resume").stdout
+    assert str(deep) in cli(ws / "sub", "scope").stdout
+    assert cli(ws / "sub", "unpin").returncode == 0
+
+    # Unpin: each folder resumes only its own notes again, and nothing moved.
     assert cli(ws, "unpin").returncode == 0
-    assert Path(cli(ws, "path").stdout.strip()) == old[ws]  # back to standalone
-    assert (base.parent / "_root" / "active" / "log-before-pin.md").exists()  # unpin keeps data
+    out = cli(ws / "sub", "resume").stdout
+    assert str(scope[ws] / "active" / "log-ws.md") not in out and str(scope[ws / "sub"] / "active" / "log-sub.md") in out
+    assert cli(ws / "sub", "scope").stdout == ""
+    assert (group / "workspace.json").exists()  # group dir (and its wiki) stays
+
+    # Legacy pre-group fragments inside the pin are copied into the folder's standalone scope.
+    legacy_ws = tmp / "legacy-ws"
+    legacy_ws.mkdir()
+    pinned_dir = Path(cli(legacy_ws, "pin").stdout.split(" (")[0])
+    (pinned_dir / "paths" / "_root" / "active").mkdir(parents=True)
+    (pinned_dir / "paths" / "_root" / "active" / "log-pre-group.md").write_text("old\n")
+    out = cli(legacy_ws, "resume")
+    own = Path(cli(legacy_ws, "path").stdout.strip())
+    assert f"Migrated 1 files from {pinned_dir / 'paths' / '_root'} to {own}" in out.stderr, out
+    assert (own / "active" / "log-pre-group.md").exists() and (pinned_dir / "paths" / "_root" / "active" / "log-pre-group.md").exists()
+
+    # gc reports a standalone scope whose folder is gone.
+    gone = tmp / "gone"
+    gone.mkdir()
+    cli(gone, "init")
+    gone_scope = Path(cli(gone, "path").stdout.strip())
+    gone.rmdir()
+    assert f"Orphan: {gone_scope} (missing directory {gone})" in cli(tmp, "gc").stdout
 
     # --- FR-1.8: MEMOIR_STORE still pointing at a v1 base directory is rejected ---
     out = run(legacy, "resume")

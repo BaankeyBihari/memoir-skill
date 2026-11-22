@@ -9,12 +9,12 @@ You are the Memoir Wiki compiler. You turn the point-in-time fragments that the 
 ## Wiki Root
 Resolve the wiki from the CLI's output, never from a guessed or relative path (NFR-3.1). A wiki written anywhere else is invisible to every other session and to `memoir-ui`.
 
-1. Run `python3 <this-skill-dir>/../memoir/scripts/memoir.py path`. The memoir skill is installed next to this one. If the script isn't there, ask the user to run `memoir.py path` and paste the output.
-2. Derive the scope root from the printed path. Find the store's `repos/`, `pinned/` or `standalone/` segment, then:
-   - `<STORE_ROOT>/repos/<repo_id>/clones/<clone>/paths/<key>`: the scope root is `<STORE_ROOT>/repos/<repo_id>`. This is a Git repository, and its wiki is shared by every clone and worktree.
-   - `<STORE_ROOT>/pinned/<slug>/paths/<key>`: the scope root is `<STORE_ROOT>/pinned/<slug>`. This is a pinned workspace, and its wiki is shared by every subpath.
-   - `<STORE_ROOT>/standalone/<slug>`: stop. Reply: "memoir-wiki needs a Git repository or a pinned workspace. Run `python3 <memoir-skill-dir>/scripts/memoir.py pin <workspace-root>`, then rerun." Fragments already in a folder's standalone scope are copied into the pinned workspace the next time memoir runs in that folder.
-3. The wiki root is `<scope root>/wiki/`. Create it on first write.
+1. Run `python3 <this-skill-dir>/../memoir/scripts/memoir.py scope`. The memoir skill is installed next to this one. If the script isn't there, ask the user to run `memoir.py scope` and paste the output.
+2. The first line is the scope root; every later line is a fragment directory the wiki compiles.
+   - `<STORE_ROOT>/repos/<repo_id>`: a Git repository. Its wiki is shared by every clone and worktree.
+   - `<STORE_ROOT>/pinned/<slug>`: a pinned group. Its wiki is shared by every member folder, whose fragments live in their own `standalone/` scopes.
+   - No output: stop. Reply: "memoir-wiki needs a Git repository or a pinned workspace. Run `python3 <memoir-skill-dir>/scripts/memoir.py pin <workspace-root>`, then rerun." The folder's existing notes join the group at once.
+3. The wiki root is `<scope root>/wiki/`. Create it on first write. The store root is the part of the scope root before `repos/` or `pinned/`.
 
 ## Isolation
 Each scope has exactly one wiki (FR-4.5). Read fragments only under the current scope root and write only under its `wiki/`, apart from the opt-in repository mirror in ingest step 10. Never merge wikis or build a cross-repo catalog. To point at another scope's page, for example when an umbrella pinned workspace needs a repo's decision, use a read-only cross-wiki link `[[<scope>:<page-path>]]`. Never edit, copy or index the other wiki.
@@ -31,19 +31,19 @@ Confirm each page written in one line with its path relative to the wiki root. W
 ### `/memoir-wiki ingest`
 Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: the watermark in `wiki/.ingest-state.json` (format in `references/schema.md`) makes rerunning it cheap and safe.
 
-1. List what changed. Run this with the scope root from **Wiki Root**:
+1. List what changed. Run this with the `memoir.py` path from **Wiki Root**; it reads `memoir.py scope` itself:
 
-       python3 - "<scope root>" <<'PY'
-       import hashlib, json, re, sys
+       python3 - "<this-skill-dir>/../memoir/scripts/memoir.py" <<'PY'
+       import hashlib, json, os, re, subprocess, sys
        from pathlib import Path
-       root = Path(sys.argv[1])
+       root, *dirs = map(Path, subprocess.check_output([sys.executable, sys.argv[1], "scope"], text=True).splitlines())
        state = root / "wiki" / ".ingest-state.json"
        seen = json.loads(state.read_text())["fragments"] if state.is_file() else {}
        name = re.compile(r"(\d{8}-)?(decision|log|reference|feedback)-[a-z0-9-]+\.md")
        now = {}
-       for path in sorted(root.glob("**/paths/*/*/*.md")):
-           if path.parent.name in ("active", "archive") and name.fullmatch(path.name):
-               now[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+       for path in sorted(p for d in dirs for sub in ("active", "archive") for p in (d / sub).glob("*.md")):
+           if name.fullmatch(path.name):
+               now[Path(os.path.relpath(path, root)).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
        for rel, digest in now.items():
            old = seen.get(rel, {}).get("sha256")
            if old != digest:
@@ -52,7 +52,7 @@ Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: th
            print("missing", "-", rel)
        PY
 
-   It covers `clones/*/paths/*/active/` and `archive/` for a repository, and `paths/*/active/` and `archive/` for a pinned workspace. It skips files whose relative path and SHA-256 match the watermark, and it skips `state-current.md`, which is a session snapshot rather than knowledge. Each output line is `new`, `changed` or `missing`, then the hash, then the path. No lines means the wiki is current: reply "Wiki is up to date." and stop.
+   It covers `active/` and `archive/` of every directory `scope` prints: each clone path of a repository, or each member folder of a pinned group (keyed relative to the scope root, e.g. `../../standalone/<slug>/active/...`). It skips files whose relative path and SHA-256 match the watermark, and it skips `state-current.md`, which is a session snapshot rather than knowledge. Each output line is `new`, `changed` or `missing`, then the hash, then the path. No lines means the wiki is current: reply "Wiki is up to date." and stop.
 2. Read each `new` and `changed` fragment. For `changed`, also read the pages its watermark entry lists. Read `index.md` and every page you're about to touch before editing it, so you merge with what's there rather than overwrite it.
 3. Synthesize each fragment into the page for its topic, using the templates in `references/schema.md`:
    - `decision-*.md`, active or archived, goes to `decisions/<topic>.md`.
@@ -108,7 +108,7 @@ Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
 ### `/memoir-wiki lint`
 Audit the wiki for structural rot and drift from the code (FR-4.4). Lint reports problems and edits nothing except `log.md`. Fixes belong to the user's call or to a later ingest.
 
-1. Check the links. Run this with the wiki root and the store root (the part of the `memoir.py path` output before `repos/` or `pinned/`):
+1. Check the links. Run this with the wiki root and the store root (from **Wiki Root**):
 
        python3 - "<wiki root>" "<store root>" <<'PY'
        import re, sys
