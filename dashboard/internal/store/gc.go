@@ -36,7 +36,8 @@ func CheckRootOrphaned(root string) bool {
 	return !info.IsDir()
 }
 
-// ListOrphans scans repos/*/clones/*/clone.json and pinned/*/workspace.json for missing root directories.
+// ListOrphans scans repos/*/clones/*/clone.json, pinned/*/workspace.json and standalone/*/scope.json
+// for missing root directories.
 func ListOrphans(storeRoot string) ([]Orphan, error) {
 	out := make([]Orphan, 0)
 
@@ -87,24 +88,28 @@ func ListOrphans(storeRoot string) ([]Orphan, error) {
 		}
 	}
 
-	// 2. Pinned workspaces under pinned/<slug>/workspace.json
-	pinnedDir := filepath.Join(absRoot, "pinned")
-	if pinEntries, err := os.ReadDir(pinnedDir); err == nil {
-		for _, pinEntry := range sortedDirEntries(pinEntries) {
-			if !pinEntry.IsDir() || strings.HasPrefix(pinEntry.Name(), ".") {
+	// 2. Pinned workspaces under pinned/<slug>/workspace.json and
+	// 3. standalone scopes under standalone/<slug>/scope.json
+	for _, flat := range []struct{ dir, record string }{{"pinned", "workspace.json"}, {"standalone", "scope.json"}} {
+		entries, err := os.ReadDir(filepath.Join(absRoot, flat.dir))
+		if err != nil {
+			continue
+		}
+		for _, entry := range sortedDirEntries(entries) {
+			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 				continue
 			}
-			pinAbs := filepath.Join(pinnedDir, pinEntry.Name())
-			recordAbs := filepath.Join(pinAbs, "workspace.json")
-			if !isConfinedRegularFile(canonRoot, pinAbs, recordAbs) {
+			dirAbs := filepath.Join(absRoot, flat.dir, entry.Name())
+			recordAbs := filepath.Join(dirAbs, flat.record)
+			if !isConfinedRegularFile(canonRoot, dirAbs, recordAbs) {
 				continue
 			}
 			rec := readScopeRecord(recordAbs)
 			if CheckRootOrphaned(rec.Root) {
 				out = append(out, Orphan{
-					Scope:    "pinned",
-					ID:       pinEntry.Name(),
-					RelPath:  path.Join("pinned", pinEntry.Name()),
+					Scope:    flat.dir,
+					ID:       entry.Name(),
+					RelPath:  path.Join(flat.dir, entry.Name()),
 					Root:     rec.Root,
 					LastSeen: rec.LastSeen,
 				})
@@ -118,7 +123,7 @@ func ListOrphans(storeRoot string) ([]Orphan, error) {
 	return out, nil
 }
 
-// PruneOrphan safely deletes an orphaned clone or pinned staging folder after confirming
+// PruneOrphan safely deletes an orphaned clone, pinned or standalone folder after confirming
 // path shape, symlink confinement inside storeRoot, and live missing-root verification.
 func PruneOrphan(storeRoot, targetRelPath string) error {
 	if targetRelPath == "" || strings.ContainsRune(targetRelPath, 0) || strings.Contains(targetRelPath, "\\") {
@@ -141,6 +146,8 @@ func PruneOrphan(storeRoot, targetRelPath string) error {
 		recordName = "clone.json"
 	case len(parts) == 2 && parts[0] == "pinned":
 		recordName = "workspace.json"
+	case len(parts) == 2 && parts[0] == "standalone":
+		recordName = "scope.json"
 	default:
 		return ErrInvalidPath
 	}
