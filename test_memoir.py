@@ -153,6 +153,29 @@ with tempfile.TemporaryDirectory() as raw:
     assert out.returncode == 0 and "Migrated 1 files" in out.stderr, out
     assert (Path(cli(plain, "path").stdout.strip()) / "active" / "log-x.md").exists()
 
+    # --- FR-2.6: pinning carries each folder's standalone notes into the workspace, copy-only ---
+    ws = tmp / "ws"
+    (ws / "sub").mkdir(parents=True)
+    old = {}
+    for folder in (ws, ws / "sub"):
+        old[folder] = Path(cli(folder, "path").stdout.strip())
+        assert "/standalone/" in str(old[folder]), old[folder]
+        cli(folder, "init")
+        (old[folder] / "active" / "log-before-pin.md").write_text(f"{folder.name}\n")
+    out = cli(ws, "pin")
+    assert out.returncode == 0 and "/pinned/" in out.stdout, out
+    for folder, key in ((ws, "_root"), (ws / "sub", "sub")):
+        base = Path(cli(folder, "path").stdout.strip())
+        assert base.name == key and "/pinned/" in str(base), base
+        out = cli(folder, "resume")
+        assert f"Migrated 1 files from {old[folder]} to {base}" in out.stderr, out
+        assert (base / "active" / "log-before-pin.md").read_text() == f"{folder.name}\n"
+        assert (old[folder] / "active" / "log-before-pin.md").exists()  # copied, not moved
+        assert "already migrated" in cli(folder, "resume").stderr
+    assert cli(ws, "unpin").returncode == 0
+    assert Path(cli(ws, "path").stdout.strip()) == old[ws]  # back to standalone
+    assert (base.parent / "_root" / "active" / "log-before-pin.md").exists()  # unpin keeps data
+
     # --- FR-1.8: MEMOIR_STORE still pointing at a v1 base directory is rejected ---
     out = run(legacy, "resume")
     assert out.returncode == 1 and "is a v1 store" in out.stderr, out

@@ -58,6 +58,8 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 | `/memoir capture` | Writes every unrecorded decision, log, reference and feedback from the conversation, then updates `state-current.md` |
 | `/memoir coach` | Captures, then recommends CONTINUE, COMPACT or CLEAR with evidence and paste-ready next steps |
 | `/memoir reload` | Archives superseded decisions and loads the last recorded session |
+| `/memoir pin [path]` | Shares one store across a non-Git workspace and its subfolders (default current directory) |
+| `/memoir unpin [path]` | Removes the pin; stored notes stay |
 
 The clear loop:
 
@@ -117,7 +119,7 @@ To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (
 | Command | Effect |
 |---|---|
 | `gc [--dry-run] [--prune]` | Reports scopes with missing source directories. Use `--prune` to delete each reported clone or pinned workspace, including its stored contents. |
-| `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. |
+| `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. A folder's existing standalone notes are copied into the workspace the next time memoir runs there. |
 | `init` | Creates `active/` and `archive/` |
 | `prompt` | Prints the absolute `active/` path for LLM injection |
 | `path` | Prints the resolved store directory |
