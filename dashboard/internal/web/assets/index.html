@@ -11,6 +11,10 @@
         if (t !== 'midnight') {
           document.documentElement.setAttribute('data-theme', t);
         }
+        var w = parseInt(localStorage.getItem('memoir-ui.sidebarWidth') || '', 10);
+        if (w >= 220 && w <= 640) {
+          document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+        }
       } catch (_) {}
     })();
   </script>
@@ -58,6 +62,19 @@
       </div>
       <nav id="sidebarTree" class="tree-root"></nav>
     </aside>
+    <div
+      id="sidebarResizer"
+      class="sidebar-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-controls="sidebar"
+      aria-valuemin="220"
+      aria-valuemax="640"
+      aria-valuenow="320"
+      tabindex="0"
+      title="Drag to resize sidebar (double-click to reset)"
+    ></div>
 
     <main id="mainContent" class="main-content">
       <div id="overviewView">

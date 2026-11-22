@@ -1,5 +1,9 @@
 (function () {
   const THEME_STORAGE_KEY = 'memoir-ui.theme';
+  const SIDEBAR_WIDTH_STORAGE_KEY = 'memoir-ui.sidebarWidth';
+  const SIDEBAR_DEFAULT_WIDTH = 320;
+  const SIDEBAR_MIN_WIDTH = 220;
+  const SIDEBAR_MAX_WIDTH = 640;
   const expandedNodes = new Set();
   const knownDefaultExpanded = new Set();
   const changeListeners = new Set();
@@ -14,6 +18,7 @@
   let searchSelectedIdx = 0;
   let searchTimer = null;
   let pendingPruneTarget = null;
+  let savedSidebarWidth = SIDEBAR_DEFAULT_WIDTH;
 
   function applyTheme(theme) {
     const allowed = new Set([
@@ -44,6 +49,104 @@
       saved = localStorage.getItem(THEME_STORAGE_KEY) || 'midnight';
     } catch (_) {}
     applyTheme(saved);
+  }
+
+  function clampSidebarWidth(width) {
+    const viewportCap = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - 280);
+    const maxW = Math.min(SIDEBAR_MAX_WIDTH, viewportCap);
+    return Math.round(Math.min(maxW, Math.max(SIDEBAR_MIN_WIDTH, width)));
+  }
+
+  function applySidebarWidth(width, persist) {
+    const clamped = clampSidebarWidth(width);
+    document.documentElement.style.setProperty('--sidebar-width', clamped + 'px');
+    const resizer = document.getElementById('sidebarResizer');
+    if (resizer) {
+      resizer.setAttribute('aria-valuenow', String(clamped));
+    }
+    if (persist) {
+      savedSidebarWidth = clamped;
+      try {
+        localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped));
+      } catch (_) {}
+    }
+    return clamped;
+  }
+
+  function initSidebarResize() {
+    let initial = SIDEBAR_DEFAULT_WIDTH;
+    try {
+      const stored = parseInt(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10);
+      if (!isNaN(stored) && stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH) {
+        initial = stored;
+      }
+    } catch (_) {}
+    savedSidebarWidth = initial;
+    applySidebarWidth(initial, false);
+
+    const resizer = document.getElementById('sidebarResizer');
+    const sidebar = document.getElementById('sidebar');
+    if (!resizer || !sidebar) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startWidth = SIDEBAR_DEFAULT_WIDTH;
+    let lastWidth = SIDEBAR_DEFAULT_WIDTH;
+
+    function finishDrag(ev) {
+      if (!dragging) return;
+      dragging = false;
+      resizer.classList.remove('resizing');
+      document.body.classList.remove('is-resizing-sidebar');
+      if (ev && typeof ev.pointerId === 'number' && resizer.hasPointerCapture && resizer.hasPointerCapture(ev.pointerId)) {
+        try { resizer.releasePointerCapture(ev.pointerId); } catch (_) {}
+      }
+      applySidebarWidth(lastWidth, true);
+    }
+
+    resizer.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      dragging = true;
+      startX = ev.clientX;
+      startWidth = sidebar.getBoundingClientRect().width;
+      lastWidth = startWidth;
+      resizer.classList.add('resizing');
+      document.body.classList.add('is-resizing-sidebar');
+      if (typeof ev.pointerId === 'number' && resizer.setPointerCapture) {
+        try { resizer.setPointerCapture(ev.pointerId); } catch (_) {}
+      }
+    });
+
+    window.addEventListener('pointermove', function (ev) {
+      if (!dragging) return;
+      lastWidth = applySidebarWidth(startWidth + (ev.clientX - startX), false);
+    });
+
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', finishDrag);
+
+    resizer.addEventListener('dblclick', function () {
+      applySidebarWidth(SIDEBAR_DEFAULT_WIDTH, true);
+    });
+
+    resizer.addEventListener('keydown', function (ev) {
+      const step = ev.shiftKey ? 40 : 20;
+      if (ev.key === 'ArrowRight') {
+        ev.preventDefault();
+        applySidebarWidth(sidebar.getBoundingClientRect().width + step, true);
+      } else if (ev.key === 'ArrowLeft') {
+        ev.preventDefault();
+        applySidebarWidth(sidebar.getBoundingClientRect().width - step, true);
+      } else if (ev.key === 'Home') {
+        ev.preventDefault();
+        applySidebarWidth(SIDEBAR_DEFAULT_WIDTH, true);
+      }
+    });
+
+    window.addEventListener('resize', function () {
+      applySidebarWidth(savedSidebarWidth, false);
+    });
   }
 
   function showToast(msg, kind) {
@@ -202,6 +305,30 @@
     }
   }
 
+  function formatTreeFileLabel(node) {
+    const raw = node && node.name ? String(node.name) : '';
+    if (!raw) return '';
+    let name = raw.replace(/\.md$/i, '');
+    let datePrefix = '';
+    const dateMatch = name.match(/^(\d{8}-)(.+)$/);
+    if (dateMatch) {
+      datePrefix = dateMatch[1];
+      name = dateMatch[2];
+    }
+    const prefixByKind = {
+      decision: 'decision-',
+      log: 'log-',
+      reference: 'reference-',
+      feedback: 'feedback-',
+      state: 'state-'
+    };
+    const prefix = prefixByKind[node.kind];
+    if (prefix && name.startsWith(prefix) && name.length > prefix.length) {
+      name = name.slice(prefix.length);
+    }
+    return (datePrefix + name) || raw;
+  }
+
   function createFileItem(node) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -215,7 +342,7 @@
 
     const lbl = document.createElement('span');
     lbl.className = 'tree-label';
-    lbl.textContent = node.name;
+    lbl.textContent = formatTreeFileLabel(node);
 
     btn.appendChild(kind);
     btn.appendChild(lbl);
@@ -1291,6 +1418,7 @@
   };
 
   initTheme();
+  initSidebarResize();
   connectSSE();
   Promise.all([refreshTree(), refreshOrphans()]).then(function () {
     const initial = parseHashFile();
