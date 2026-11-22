@@ -165,3 +165,52 @@ func TestResolveSafeFileSecurityAndErrors(t *testing.T) {
 		t.Fatalf("missing file err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestScanGroupsStandaloneMembersUnderLongestPin(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "pinned.json"), `["/w","/w/inner"]`)
+	mustWriteFile(t, filepath.Join(root, "pinned", "w--11111111", "workspace.json"), `{"root":"/w"}`)
+	mustWriteFile(t, filepath.Join(root, "pinned", "w--11111111", "paths", "_root", "active", "log-legacy.md"), "# Legacy\n")
+	mustWriteFile(t, filepath.Join(root, "pinned", "inner--22222222", "workspace.json"), `{"root":"/w/inner"}`)
+	// Unpinned group: its workspace.json survives but pinned.json no longer lists it.
+	mustWriteFile(t, filepath.Join(root, "pinned", "old--33333333", "workspace.json"), `{"root":"/old"}`)
+
+	member := func(id, dir string) {
+		mustWriteFile(t, filepath.Join(root, "standalone", id, "scope.json"), `{"root":"`+dir+`"}`)
+		mustWriteFile(t, filepath.Join(root, "standalone", id, "active", "decision-x.md"), "# X\n")
+	}
+	member("w--aaaaaaaa", "/w")
+	member("b--bbbbbbbb", "/w/a/b")
+	member("deep--cccccccc", "/w/inner/deep")
+	member("wx--dddddddd", "/wx")     // sibling prefix, not inside /w
+	member("old--eeeeeeee", "/old/x") // under an unpinned group
+
+	tree, err := Scan(root)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	paths := map[string][]PathScope{}
+	for _, pin := range tree.Pinned {
+		paths[pin.ID] = pin.Paths
+	}
+	w := paths["w--11111111"]
+	if len(w) != 3 || w[0].Key != "_root" || w[1].Key != "w--aaaaaaaa" || w[1].Label != "root" ||
+		w[2].Key != "b--bbbbbbbb" || w[2].Label != "a/b" || len(w[2].Active) != 1 {
+		t.Fatalf("unexpected /w group paths: %+v", w)
+	}
+	if inner := paths["inner--22222222"]; len(inner) != 1 || inner[0].Key != "deep--cccccccc" || inner[0].Label != "deep" {
+		t.Fatalf("unexpected /w/inner group paths: %+v", inner)
+	}
+	if old := paths["old--33333333"]; len(old) != 0 {
+		t.Fatalf("unpinned group must have no members: %+v", old)
+	}
+
+	var ids []string
+	for _, st := range tree.Standalone {
+		ids = append(ids, st.ID)
+	}
+	if len(ids) != 2 || ids[0] != "old--eeeeeeee" || ids[1] != "wx--dddddddd" {
+		t.Fatalf("Standalone must list only ungrouped scopes, got %v", ids)
+	}
+}

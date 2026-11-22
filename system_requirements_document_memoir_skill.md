@@ -192,14 +192,14 @@ All v1 fragment schemas and slash commands remain unchanged:
 ### 6.1 Single-Binary Web Viewer
 * **FR-5.1 (Zero-Dependency Binary):** Build under `dashboard/go.mod` using Go `embed.FS` for all HTML/CSS/JS assets. Support `--port` (default `7337`), `--store` (default `~/.memoir`), and `--open` on the default (no-subcommand) foreground server; lifecycle subcommands are in FR-5.6.
 * **FR-5.2 (Live Reload via SSE):** Watch `$STORE_ROOT` recursively with `fsnotify` and broadcast file-change events over `/events` (Server-Sent Events) so open browser tabs refresh automatically when agents write fragments or wiki pages.
-* **FR-5.3 (Hierarchical Sidebar):** Group top-level navigation into **Repos**, **Pinned Workspaces**, and **Standalone**, expanding into shared **Wiki** (`index.md`, `log.md`, categories) and **Clones → Worktrees** (`state-current.md`, `active/`, `archive/`).
+* **FR-5.3 (Hierarchical Sidebar):** Group top-level navigation into **Repos**, **Pinned Workspaces**, and **Standalone**, expanding into shared **Wiki** (`index.md`, `log.md`, categories) and **Clones → Worktrees** (`state-current.md`, `active/`, `archive/`). A pinned group lists its member standalone scopes (labelled by directory relative to the pin) next to any legacy `pinned/<slug>/paths/<key>`, and **Standalone** lists only scopes in no group.
 * **FR-5.4 (Markdown, `[[wikilinks]]`, Backlinks & Supersession Graphs):**
   * Render Markdown via `goldmark` with clickable `[[wikilink]]` routing.
   * Parse frontmatter/header fields (`Date`, `Supersedes`, `Superseded-By`, `Target`) into metadata badges.
   * Compute and render inbound **Backlinks** on every page and visual supersession chains across active and `archive/` `decision-*.md` files.
 * **FR-5.5 (Search & Safe Housekeeping):**
   * Maintain an in-memory full-text search index refreshed on `fsnotify` events, accessible via `Cmd+K` with scope (`repo`, `pinned`, `standalone`) and type (`decision`, `log`, `reference`, `feedback`, `wiki`) filters.
-  * Badge orphaned clones/workspaces whose `root` path no longer exists on disk and provide a confirmed prune action equivalent to `memoir.py gc --prune`.
+  * Badge orphaned clones, workspaces and standalone scopes whose `root` path no longer exists on disk and provide a confirmed prune action equivalent to `memoir.py gc --prune`.
 * **FR-5.6 (Lifecycle & Update Subcommands):** `memoir-ui` with no subcommand runs the FR-5.1 foreground server unchanged. `GET /api/health` additionally reports `app` (`"memoir-ui"`), `pid`, and `version`; a port "runs memoir-ui" only when its health answers with `app == "memoir-ui"`. Subcommands (each accepting `--port`, default `7337`):
   * `dashboard [--store S]`: if memoir-ui already runs on the port, only open the browser; otherwise start the server as a detached background process logging to `<user cache dir>/memoir-ui/memoir-ui.log`, wait up to 5 s for its health, open the browser, and print the URL, PID, and log path. Fail if the port is held by anything else, with `port <n> is in use by another program (maybe an older memoir-ui); stop it or pass --port <other>`.
   * `shutdown`: send `SIGTERM` to the PID from health and wait up to 5 s for it to stop; print `not running` and exit `0` when nothing runs. There is no HTTP shutdown endpoint, because any browser page can reach localhost.

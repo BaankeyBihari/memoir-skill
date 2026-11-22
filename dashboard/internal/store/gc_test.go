@@ -57,12 +57,12 @@ func TestGCListAndPruneOrphansSafely(t *testing.T) {
 		t.Fatalf("expected ErrNotOrphaned for healthy clone, got %v", err)
 	}
 
-	// Refuse invalid paths (repo root, wiki, standalone, traversal).
+	// Refuse invalid paths (repo root, wiki, nested standalone, traversal).
 	for _, bad := range []string{
 		"../outside",
 		"repos/github.com__acme__app",
 		"repos/github.com__acme__app/wiki",
-		"standalone/scratch--44444444",
+		"standalone/scratch--44444444/active",
 		"repos/github.com__acme__app/clones/app--11111111/paths/_main",
 	} {
 		if err := PruneOrphan(storeRoot, bad); !errors.Is(err, ErrInvalidPath) {
@@ -96,5 +96,35 @@ func TestGCListAndPruneOrphansSafely(t *testing.T) {
 	}
 	if _, err := os.Stat(healthyClone); err != nil {
 		t.Fatalf("healthy clone must remain intact: %v", err)
+	}
+}
+
+func TestGCListAndPruneOrphanedStandalone(t *testing.T) {
+	storeRoot := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "gone")
+	orphan := filepath.Join(storeRoot, "standalone", "gone--44444444")
+	healthy := filepath.Join(storeRoot, "standalone", "here--55555555")
+	mustWriteFile(t, filepath.Join(orphan, "scope.json"), `{"root":"`+missing+`"}`)
+	mustWriteFile(t, filepath.Join(orphan, "active", "decision-x.md"), "# X\n")
+	mustWriteFile(t, filepath.Join(healthy, "scope.json"), `{"root":"`+t.TempDir()+`"}`)
+
+	orphans, err := ListOrphans(storeRoot)
+	if err != nil {
+		t.Fatalf("ListOrphans failed: %v", err)
+	}
+	if len(orphans) != 1 || orphans[0].Scope != "standalone" || orphans[0].RelPath != "standalone/gone--44444444" {
+		t.Fatalf("unexpected orphans: %+v", orphans)
+	}
+	if err := PruneOrphan(storeRoot, "standalone/here--55555555"); !errors.Is(err, ErrNotOrphaned) {
+		t.Fatalf("expected ErrNotOrphaned for healthy standalone, got %v", err)
+	}
+	if err := PruneOrphan(storeRoot, "standalone/gone--44444444"); err != nil {
+		t.Fatalf("PruneOrphan standalone failed: %v", err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("expected orphaned standalone dir removed")
+	}
+	if _, err := os.Stat(healthy); err != nil {
+		t.Fatalf("healthy standalone must remain: %v", err)
 	}
 }
