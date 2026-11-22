@@ -10,7 +10,9 @@ SCRIPT = Path(__file__).parent / "skills" / "memoir" / "scripts" / "memoir.py"
 
 def run(store: Path, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "MEMOIR_STORE": str(store)}
-    return subprocess.run([sys.executable, str(SCRIPT), *args], env=env, capture_output=True, text=True, check=False)
+    # Run beside the store, not in this repo, whose own v1 `.agents/memoir` would be migrated.
+    return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=store.expanduser().parent, env=env,
+                          capture_output=True, text=True, check=False)
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -108,5 +110,46 @@ with tempfile.TemporaryDirectory() as tmp:
         assert out.returncode == 3 and f"No write access to {ro / 'store'}" in out.stderr, out
         assert not (ro / "store").exists()
     ro.chmod(0o755)
+
+# --- FR-1.7: v1 stores are copied into an empty v2 scope, never moved or merged ---
+with tempfile.TemporaryDirectory() as raw:
+    tmp = Path(raw).resolve()
+    env = {**os.environ, "HOME": str(tmp), "MEMOIR_STORE": "", "XDG_CONFIG_HOME": str(tmp / "xdg")}
+
+    def cli(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, SCRIPT, *args], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+
+    repo = tmp / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    legacy = repo / ".agents" / "memoir"
+    (legacy / "active").mkdir(parents=True)
+    (legacy / "archive").mkdir()
+    (legacy / "active" / "state-current.md").write_text("# Session State\n")
+    (legacy / "archive" / "20260101-log-old.md").write_text("old\n")
+    base = Path(cli(repo, "path").stdout.strip())
+    assert not (base / "active").exists()  # path is read-only: no migration
+    out = cli(repo, "resume")
+    assert out.returncode == 0 and f"Migrated 2 files from {legacy} to {base}" in out.stderr, out
+    assert (base / "active" / "state-current.md").read_text() == "# Session State\n"
+    assert (base / "archive" / "20260101-log-old.md").exists()
+    assert (legacy / "active" / "state-current.md").exists()  # copied, not moved
+    assert str(base / "active" / "state-current.md") in out.stdout
+
+    (legacy / "active" / "decision-late.md").write_text("late\n")
+    out = cli(repo, "resume")
+    assert "Migrated" not in out.stderr and "not migrated" in out.stderr, out  # no merge into a used scope
+    assert not (base / "active" / "decision-late.md").exists()
+
+    plain = tmp / "plain"  # non-Git v1 `.claude/memoir` at the cwd
+    (plain / ".claude" / "memoir" / "active").mkdir(parents=True)
+    (plain / ".claude" / "memoir" / "active" / "log-x.md").write_text("x\n")
+    out = cli(plain, "init")
+    assert out.returncode == 0 and "Migrated 1 files" in out.stderr, out
+    assert (Path(cli(plain, "path").stdout.strip()) / "active" / "log-x.md").exists()
+
+    # --- FR-1.8: MEMOIR_STORE still pointing at a v1 base directory is rejected ---
+    out = run(legacy, "resume")
+    assert out.returncode == 1 and "is a v1 store" in out.stderr, out
+    assert not (legacy / "repos").exists() and not (legacy / "standalone").exists()
 
 print("ok")

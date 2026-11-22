@@ -141,6 +141,25 @@ def check_access(base_dir: Path) -> None:
         print(f"[Memoir] No write access to {base_dir.absolute()} ({e.strerror or e})", file=sys.stderr)
         sys.exit(3)
 
+def migrate_legacy(base_dir: Path) -> None:
+    """Copy a v1 store into an empty v2 scope, leaving the original in place (FR-1.7)."""
+    root = Path(git_output("rev-parse", "--show-toplevel") or Path.cwd()).resolve()
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    digest = hashlib.sha256(str(Path.cwd().resolve()).encode()).hexdigest()[:8]
+    candidates = [root / ".agents" / "memoir", root / ".claude" / "memoir", config / "memoir" / "memories" / digest]
+    legacy = next((c for c in candidates if (c / "active").is_dir() or (c / "archive").is_dir()), None)
+    if legacy is None:
+        return
+    if any(any((base_dir / d).iterdir()) for d in ("active", "archive")):
+        print(f"[Memoir] Legacy store {legacy} not migrated: {base_dir} already has files.", file=sys.stderr)
+        return
+    copied = 0
+    for d in ("active", "archive"):
+        if (legacy / d).is_dir():
+            shutil.copytree(legacy / d, base_dir / d, dirs_exist_ok=True)
+            copied += sum(1 for p in (legacy / d).rglob("*") if p.is_file())
+    print(f"[Memoir] Migrated {copied} files from {legacy} to {base_dir}; delete {legacy} once verified.", file=sys.stderr)
+
 def init_store(base_dir: Path):
     active_dir = base_dir / "active"
     archive_dir = base_dir / "archive"
@@ -290,6 +309,8 @@ def main():
     mode.add_argument("--prune", action="store_true", help="Remove each orphaned scope directory")
 
     args = parser.parse_args()
+    if (store_root() / "active").is_dir():
+        raise ValueError(f"{store_root()} is a v1 store (has active/); unset or repoint MEMOIR_STORE to a v2 store root.")
     if args.command == "gc":
         collect_orphans(store_root(), args.prune)
         return
@@ -299,6 +320,7 @@ def main():
     base_dir = resolve_store(store_root(), args.command != "path")
     if args.command != "path":
         check_access(base_dir)
+        migrate_legacy(base_dir)
 
     if args.command == "path":
         print(base_dir.absolute())

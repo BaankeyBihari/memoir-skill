@@ -69,6 +69,10 @@ with runs outside `[a-z0-9]` replaced by one hyphen and outer hyphens trimmed
 * Outside Git, choose the longest pinned ancestor by directory component.
   Hash the pinned root and use `_root` or the relative subpath joined with
   `__`. Without a match, hash the current directory and use the flat scope.
+* v1 stores (`<toplevel-or-cwd>/.agents/memoir`, `.claude/memoir`,
+  `~/.config/memoir/memories/<sha8>`) are copied into an empty resolved scope
+  on first use and left in place (SRD FR-1.7). A store root containing
+  `active/` is a v1 base directory and is rejected (SRD FR-1.8).
 
 ## Wiki scopes and links
 
