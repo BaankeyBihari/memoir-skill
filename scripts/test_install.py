@@ -427,15 +427,30 @@ class TestInstaller(unittest.TestCase):
             self.assertFalse((home / ".local/bin/memoir-ui").exists())
 
     def test_invalid_version_rejected(self):
+        for bad in ("v1.0.0", "2027.01.1"):  # zero-padded months are not semver (SRD FR-6.2)
+            with tempfile.TemporaryDirectory() as tmp:
+                res = subprocess.run(
+                    [str(SCRIPT), "--version", bad],
+                    env={**os.environ, "HOME": tmp},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(res.returncode, 2, bad)
+
+    def test_next_version(self):
+        next_version = SCRIPT.parent / "next-version.sh"
         with tempfile.TemporaryDirectory() as tmp:
-            res = subprocess.run(
-                [str(SCRIPT), "--version", "v1.0.0"],
-                env={**os.environ, "HOME": tmp},
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(res.returncode, 2)
+            git = ["git", "-C", tmp, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run(["git", "init", "-q", tmp], check=True)
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+            for tag in ("2026.11.1", "2026.11.2", "2026.11.10", "2026.1.5", "2026.11.x", "2026.11.01"):
+                subprocess.run([*git, "tag", tag], check=True)
+            for prefix, want in (("2026.11", "2026.11.11"), ("2026.1", "2026.1.6"), ("2027.1", "2027.1.1")):
+                out = subprocess.run([str(next_version), prefix], cwd=tmp, capture_output=True, text=True, check=True)
+                self.assertEqual(out.stdout.strip(), want, prefix)
+            out = subprocess.run([str(next_version)], cwd=tmp, capture_output=True, text=True, check=True)
+            self.assertRegex(out.stdout.strip(), r"^[0-9]{4}\.([1-9]|1[0-2])\.[1-9][0-9]*$")
 
     def test_local_go_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
