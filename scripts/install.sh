@@ -546,6 +546,7 @@ probe_file=$(mktemp "$store/.memoir-write-probe.XXXXXX" 2>/dev/null) || {
     exit 3
 }
 rm -f "$probe_file"
+installed=()
 
 if "$skills"; then
     skills_root=
@@ -572,7 +573,9 @@ if "$skills"; then
             exit 1
         fi
         mkdir -p "$dest"
+        rm -f "$dest/VERSION"  # a checkout has none; keep a stale release stamp from lingering
         cp -R "$skills_root/$name/." "$dest/"
+        installed+=("$name $(cat "$dest/VERSION" 2>/dev/null || echo dev)")
         for dir in "$HOME"/{.claude/skills,.codex/skills,.pi/agent/skills,.gemini/antigravity/skills}; do
             [[ -d $dir ]] || continue
             link="$dir/$name"
@@ -612,4 +615,8 @@ if "$ui"; then
     fi
     mkdir -p "$HOME/.local/bin"
     install -m 755 "$tmp/memoir-ui" "$HOME/.local/bin/memoir-ui"
+    installed+=("memoir-ui $("$HOME/.local/bin/memoir-ui" --version 2>/dev/null || echo unknown)")
 fi
+
+printf -v summary '%s, ' "${installed[@]}"
+echo "Installed ${summary%, }"
