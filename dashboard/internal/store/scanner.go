@@ -45,24 +45,28 @@ func Scan(storeRoot string) (*Tree, error) {
 		return tree, nil
 	}
 
-	groups, grouped := pinGroups(storeRoot)
+	members := pinMembers(storeRoot)
 	tree.Repos = scanRepos(storeRoot)
-	tree.Pinned = scanPinned(storeRoot, groups)
-	tree.Standalone = scanStandalone(storeRoot, grouped)
+	tree.Pinned = scanPinned(storeRoot, pinGroups(storeRoot, members))
+	tree.Standalone = scanStandalone(storeRoot, members)
 	return tree, nil
 }
 
-// pinGroups maps each pinned/<slug> to the paths of its member standalone scopes: those whose
-// scope.json root has the slug's pin as longest pinned.json ancestor (SPEC.md, Identity and routing).
-// It also returns the set of grouped standalone IDs. Membership is computed, never stored.
-func pinGroups(storeRoot string) (map[string][]PathScope, map[string]bool) {
-	groups := make(map[string][]PathScope)
-	grouped := make(map[string]bool)
+// groupMember names the pinned/<slug> group a standalone scope belongs to and its directory relative to the pin.
+type groupMember struct {
+	Slug  string
+	Label string
+}
+
+// pinMembers maps each grouped standalone scope ID to its group: the pin that is its scope.json root's
+// longest pinned.json ancestor (SPEC.md, Identity and routing). Membership is computed, never stored.
+func pinMembers(storeRoot string) map[string]groupMember {
+	members := make(map[string]groupMember)
 
 	var pins []string
 	data, err := os.ReadFile(filepath.Join(storeRoot, "pinned.json"))
 	if err != nil || json.Unmarshal(data, &pins) != nil {
-		return groups, grouped
+		return members
 	}
 	slugByRoot := make(map[string]string)
 	if entries, err := os.ReadDir(filepath.Join(storeRoot, "pinned")); err == nil {
@@ -80,9 +84,7 @@ func pinGroups(storeRoot string) (map[string][]PathScope, map[string]bool) {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		id := entry.Name()
-		dirAbs := filepath.Join(storeRoot, "standalone", id)
-		root := readScopeRecord(filepath.Join(dirAbs, "scope.json")).Root
+		root := readScopeRecord(filepath.Join(storeRoot, "standalone", entry.Name(), "scope.json")).Root
 		pin, rel := longestPin(pins, root)
 		slug, ok := slugByRoot[pin]
 		if !ok {
@@ -92,20 +94,28 @@ func pinGroups(storeRoot string) (map[string][]PathScope, map[string]bool) {
 		if rel != "." {
 			label = filepath.ToSlash(rel)
 		}
-		state, active, archive := scanActiveArchive(storeRoot, dirAbs)
-		groups[slug] = append(groups[slug], PathScope{Key: id, Label: label, State: state, Active: active, Archive: archive})
-		grouped[id] = true
+		members[entry.Name()] = groupMember{Slug: slug, Label: label}
 	}
-	for _, members := range groups {
-		sort.Slice(members, func(i, j int) bool {
-			a, b := members[i].Label, members[j].Label
+	return members
+}
+
+// pinGroups builds each pinned/<slug> group's member paths, the pin's own directory first, then by label.
+func pinGroups(storeRoot string, members map[string]groupMember) map[string][]PathScope {
+	groups := make(map[string][]PathScope)
+	for id, m := range members {
+		state, active, archive := scanActiveArchive(storeRoot, filepath.Join(storeRoot, "standalone", id))
+		groups[m.Slug] = append(groups[m.Slug], PathScope{Key: id, Label: m.Label, State: state, Active: active, Archive: archive})
+	}
+	for _, paths := range groups {
+		sort.Slice(paths, func(i, j int) bool {
+			a, b := paths[i].Label, paths[j].Label
 			if (a == "root") != (b == "root") {
 				return a == "root"
 			}
 			return a < b
 		})
 	}
-	return groups, grouped
+	return groups
 }
 
 // longestPin returns the longest pin containing root by directory component and root's path relative to it.
@@ -209,7 +219,7 @@ func scanPinned(storeRoot string, groups map[string][]PathScope) []PinnedScope {
 	return out
 }
 
-func scanStandalone(storeRoot string, grouped map[string]bool) []StandaloneScope {
+func scanStandalone(storeRoot string, members map[string]groupMember) []StandaloneScope {
 	standaloneDir := filepath.Join(storeRoot, "standalone")
 	entries, err := os.ReadDir(standaloneDir)
 	if err != nil {
@@ -218,7 +228,7 @@ func scanStandalone(storeRoot string, grouped map[string]bool) []StandaloneScope
 
 	out := make([]StandaloneScope, 0, len(entries))
 	for _, entry := range sortedDirEntries(entries) {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || grouped[entry.Name()] {
+		if _, grouped := members[entry.Name()]; grouped || !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		id := entry.Name()
