@@ -151,7 +151,17 @@ def migrate_legacy(base_dir: Path) -> None:
     if legacy is None:
         return
     if any(any((base_dir / d).iterdir()) for d in ("active", "archive")):
-        print(f"[Memoir] Legacy store {legacy} not migrated: {base_dir} already has files.", file=sys.stderr)
+        # v2 files change after the copy, so match by name: kept as-is, or an active fragment archived since.
+        covered = all(
+            (base_dir / f.relative_to(legacy)).exists()
+            or (f.parent == legacy / "active" and any((base_dir / "archive").glob(f"[0-9]*-{f.name}")))
+            for d in ("active", "archive") if (legacy / d).is_dir()
+            for f in (legacy / d).rglob("*") if f.is_file()
+        )
+        if covered:
+            print(f"[Memoir] Legacy store {legacy} is already migrated to {base_dir}; delete {legacy} to silence this.", file=sys.stderr)
+        else:
+            print(f"[Memoir] Legacy store {legacy} not migrated: {base_dir} already has files.", file=sys.stderr)
         return
     copied = 0
     for d in ("active", "archive"):
