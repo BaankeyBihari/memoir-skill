@@ -58,8 +58,8 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 | `/memoir capture` | Writes every unrecorded decision, log, reference and feedback from the conversation, then updates `state-current.md` |
 | `/memoir coach` | Captures, then recommends CONTINUE, COMPACT or CLEAR with evidence and paste-ready next steps |
 | `/memoir reload` | Archives superseded decisions and loads the last recorded session |
-| `/memoir pin [path]` | Shares one store across a non-Git workspace and its subfolders (default current directory) |
-| `/memoir unpin [path]` | Removes the pin; stored notes stay |
+| `/memoir pin [path]` | Groups a non-Git workspace and its subfolders (default current directory): each folder keeps its own notes, `reload` loads the whole group's, state stays per folder |
+| `/memoir unpin [path]` | Removes the group; every folder keeps its own notes |
 
 The clear loop:
 
@@ -75,7 +75,7 @@ When `[text]` is empty, the content is extracted from the recent conversation.
 
 | Command | Effect |
 |---|---|
-| `/memoir-wiki ingest` | Incrementally synthesizes new/changed fragments across clones and subpaths into the scope's shared `wiki/` (and mirrors to the repo when `meta.json` sets `"sync_to_repo": true`) |
+| `/memoir-wiki ingest` | Incrementally synthesizes new/changed fragments across clones, worktrees and pinned group members into the scope's shared `wiki/` (and mirrors to the repo when `meta.json` sets `"sync_to_repo": true`) |
 | `/memoir-wiki query [question]` | Reads `wiki/index.md` first, traverses `[[wikilinks]]`, answers with citations, and files reusable syntheses under `wiki/architecture/` |
 | `/memoir-wiki lint` | Audits `wiki/` for broken local or cross-wiki `[[wikilinks]]`, unindexed pages, orphans, contradictions, and stale file/command references |
 
@@ -119,10 +119,11 @@ To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (
 | Command | Effect |
 |---|---|
 | `gc [--dry-run] [--prune]` | Reports scopes with missing source directories. Use `--prune` to delete each reported clone or pinned workspace, including its stored contents. |
-| `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. A folder's existing standalone notes are copied into the workspace the next time memoir runs there. |
+| `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. Pinning moves no files. |
 | `init` | Creates `active/` and `archive/` |
 | `prompt` | Prints the absolute `active/` path for LLM injection |
 | `path` | Prints the resolved store directory |
+| `scope` | Prints the wiki scope root (repository or pinned group), then each fragment directory it covers |
 | `archive <files>` | Moves fragments to `archive/` as `YYYYMMDD-<name>` and never overwrites |
 | `archive --superseded` | Archives every decision named on another decision's `Supersedes:` line, writing a `Superseded-By:` back-link into each archived copy |
 | `resume` | Prints the path and the files to load, `state-current.md` first |

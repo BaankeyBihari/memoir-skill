@@ -103,19 +103,14 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │                   └── Worktrees__wt-feature/     # Worktree relative to --show-toplevel
 │                       ├── active/
 │                       └── archive/
-├── pinned/                                        # Scope 2: User-pinned non-Git workspaces
+├── pinned/                                        # Scope 2: Groups over standalone scopes (no fragments)
 │   └── <project-slug>--<sha8>/                    # e.g., research--4d5e6f7a
 │       ├── workspace.json                         # {"root": "/abs/path/to/pinned/root", "last_seen": "..."}
-│       ├── wiki/                                  # Compiled by memoir-wiki across all pinned subpaths
-│       └── paths/
-│           ├── _root/                             # Invoked directly at pinned root
-│           │   ├── active/
-│           │   └── archive/
-│           └── sub__dir/                          # Invoked in subdirectory under pinned root
-│               ├── active/
-│               └── archive/
-└── standalone/                                    # Scope 3: Unpinned non-Git directories (flat)
+│       ├── wiki/                                  # Compiled by memoir-wiki across all group members
+│       └── paths/                                 # Legacy pre-group fragments, copied out lazily (FR-1.7)
+└── standalone/                                    # Scope 3: Every non-Git directory (flat), pinned or not
     └── <project-slug>--<sha8>/                    # e.g., scratch-script--8b9c0d1e
+        ├── scope.json                             # {"root": "/abs/path/to/directory", "last_seen": "..."}
         ├── active/
         └── archive/
 ```
@@ -137,27 +132,22 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 * **FR-1.4 (Non-Git Pinned & Standalone Resolution):**
   * Store canonical `realpath` strings in `<STORE_ROOT>/pinned.json` (JSON array of strings).
   * For non-Git `REAL_CWD = realpath($PWD)`, find all entries `PIN` in `pinned.json` where `REAL_CWD == PIN` or `REAL_CWD` starts with `PIN + "/"`.
-  * **Pinned Match (Longest Prefix Wins):**
-    * `slug = "<slugify(basename(PIN))>--<sha256(PIN)[:8]>"`
-    * `subpath = "_root"` if `REAL_CWD == PIN` else `relpath(REAL_CWD, PIN).replace("/", "__")`
-    * Persist/update `workspace.json` at `<STORE_ROOT>/pinned/<slug>/workspace.json` with `{"root": PIN, "last_seen": "<ISO-8601>"}`.
-    * Set `$BASE_DIR = <STORE_ROOT>/pinned/<slug>/paths/<subpath>`.
-  * **Standalone Fallback (No Pinned Ancestor):**
-    * `slug = "<slugify(basename(REAL_CWD))>--<sha256(REAL_CWD)[:8]>"`
-    * Set `$BASE_DIR = <STORE_ROOT>/standalone/<slug>`.
+  * **Standalone Scope (Always):** `slug = "<slugify(basename(REAL_CWD))>--<sha256(REAL_CWD)[:8]>"`; set `$BASE_DIR = <STORE_ROOT>/standalone/<slug>` and persist/update `<BASE_DIR>/scope.json` with `{"root": REAL_CWD, "last_seen": "<ISO-8601>"}`. Fragments are always written here, pinned or not.
+  * **Pinned Group (Longest Prefix Wins):** A pin is a group, not a storage location. The group of `REAL_CWD` is its longest matching `PIN`, with `slug = "<slugify(basename(PIN))>--<sha256(PIN)[:8]>"`; persist/update `<STORE_ROOT>/pinned/<slug>/workspace.json` with `{"root": PIN, "last_seen": "<ISO-8601>"}`. Its **members** are the standalone scopes whose `scope.json` root has that `PIN` as its longest matching pin. Membership is computed on each read, never stored, so unpinning or nesting pins regroups scopes without moving any file. Group reads (FR-2.3, FR-2.4, FR-2.8, FR-4.2) flatten every member's `decision-`, `log-`, `reference-`, and `feedback-` fragments; `state-current.md` is read only from `$BASE_DIR`.
 * **FR-1.5 (Internal Directories & Write Probe):** Every command except `path`, `pin`, `unpin`, and `gc` MUST ensure `$BASE_DIR/active/` and `$BASE_DIR/archive/` exist and probe a write before proceeding. On failure, print `[Memoir] No write access to <absolute path> (<OS error>)` and exit `3` without falling back to another path. The LLM MUST stop, show the user the absolute path (`~/.memoir`), and ask them to grant directory access before retrying.
 * **FR-1.6 (No Repo `.gitignore` Mutation):** Remove v1 `.gitignore` injection logic; `memoir.py` MUST NOT touch files inside user repositories.
-* **FR-1.7 (Lazy v1 Store Migration):** After the write probe (FR-1.5), if `$BASE_DIR/active/` and `$BASE_DIR/archive/` are both empty, look for the first v1 store with an `active/` or `archive/` directory among `<ROOT>/.agents/memoir`, `<ROOT>/.claude/memoir`, and `${XDG_CONFIG_HOME:-~/.config}/memoir/memories/<sha256(realpath($PWD))[:8]>`, and last the standalone scope `<STORE_ROOT>/standalone/<slug(realpath($PWD))>` unless it is `$BASE_DIR` itself, where `<ROOT>` is `realpath(git rev-parse --show-toplevel)` inside Git, else `realpath($PWD)`. The standalone candidate carries a folder's notes into its scope after it is pinned (FR-2.6) or becomes a Git repository; standalone scopes record no root, so this happens lazily per folder rather than inside `pin`. Copy its `active/` and `archive/` contents into `$BASE_DIR` (never move or delete the v1 store) and print `[Memoir] Migrated <n> files from <legacy> to <BASE_DIR>; delete <legacy> once verified.` to stderr (stdout stays the `prompt`/`resume` contract). If `$BASE_DIR` already holds files, do not merge. When every v1 file is already in `$BASE_DIR` (same relative path, or a v1 `active/<name>` archived as `archive/<YYYYMMDD>-<name>`; contents are not compared because v2 files keep changing after the copy), print `[Memoir] Legacy store <legacy> is already migrated to <BASE_DIR>; delete <legacy> to silence this.` to stderr; otherwise print `[Memoir] Legacy store <legacy> not migrated: <BASE_DIR> already has files.` to stderr. No dedicated migration command exists.
+* **FR-1.7 (Lazy v1 Store Migration):** After the write probe (FR-1.5), if `$BASE_DIR/active/` and `$BASE_DIR/archive/` are both empty, look for the first v1 store with an `active/` or `archive/` directory among `<ROOT>/.agents/memoir`, `<ROOT>/.claude/memoir`, and `${XDG_CONFIG_HOME:-~/.config}/memoir/memories/<sha256(realpath($PWD))[:8]>`, then, outside Git, the legacy pre-group pinned path `<STORE_ROOT>/pinned/<group-slug>/paths/<subpath>` (`subpath` = `_root` at the pin, else `relpath(REAL_CWD, PIN)` joined with `__`), and last, inside Git, the standalone scope `<STORE_ROOT>/standalone/<slug(realpath($PWD))>`, where `<ROOT>` is `realpath(git rev-parse --show-toplevel)` inside Git, else `realpath($PWD)`. The standalone candidate carries a folder's notes into its repository scope after `git init`. Copy its `active/` and `archive/` contents into `$BASE_DIR` (never move or delete the v1 store) and print `[Memoir] Migrated <n> files from <legacy> to <BASE_DIR>; delete <legacy> once verified.` to stderr (stdout stays the `prompt`/`resume` contract). If `$BASE_DIR` already holds files, do not merge. When every v1 file is already in `$BASE_DIR` (same relative path, or a v1 `active/<name>` archived as `archive/<YYYYMMDD>-<name>`; contents are not compared because v2 files keep changing after the copy), print `[Memoir] Legacy store <legacy> is already migrated to <BASE_DIR>; delete <legacy> to silence this.` to stderr; otherwise print `[Memoir] Legacy store <legacy> not migrated: <BASE_DIR> already has files.` to stderr. No dedicated migration command exists.
 * **FR-1.8 (v1 `MEMOIR_STORE` Guard):** In v1, `$MEMOIR_STORE` named a base directory; in v2 it names the store root. If `$STORE_ROOT/active` is a directory, every command MUST exit `1` with `[Memoir] <STORE_ROOT> is a v1 store (has active/); unset or repoint MEMOIR_STORE to a v2 store root.` without creating anything.
 
 ### 4.2 CLI Commands (`skills/memoir/scripts/memoir.py`)
-* **FR-2.1 (`init`):** Create `$BASE_DIR/active/` and `$BASE_DIR/archive/` and write scope metadata (`clone.json` or `workspace.json`).
+* **FR-2.1 (`init`):** Create `$BASE_DIR/active/` and `$BASE_DIR/archive/` and write scope metadata (`clone.json`, or `scope.json` plus the group's `workspace.json`).
 * **FR-2.2 (`prompt`):** Output the system instruction string containing the exact absolute path to `$BASE_DIR/active/`.
-* **FR-2.3 (`archive`):** Move specified superseded files from `active/` to `archive/`, prepending `YYYYMMDD-`. With `--superseded`, move every active decision named on another active decision's `Supersedes:` line into `archive/`, writing `Superseded-By: <new-file.md>` into the active copy prior to moving so the operation is crash-safe and idempotent.
-* **FR-2.4 (`resume`):** Output the `prompt` instruction followed by a copy-paste ready list of exact absolute paths of all active files, `state-current.md` first.
+* **FR-2.3 (`archive`):** Move specified superseded files from `active/` to `archive/`, prepending `YYYYMMDD-`. With `--superseded`, move every active decision named on another active decision's `Supersedes:` line into `archive/`, writing `Superseded-By: <new-file.md>` into the active copy prior to moving so the operation is crash-safe and idempotent. In a pinned group, `Supersedes:` lines are read from every member; a named file is looked up in the superseding decision's own scope first, else in the only member holding it, and archived inside its own scope. A name held by several other members is skipped with a warning. Explicit `archive <files>` acts on `$BASE_DIR` only.
+* **FR-2.4 (`resume`):** Output the `prompt` instruction followed by a copy-paste ready list of exact absolute paths of all active files, `state-current.md` first. In a pinned group the list holds `$BASE_DIR`'s `state-current.md`, then the active fragments of every member (FR-1.4); other members' `state-current.md` files are never listed.
 * **FR-2.5 (`path`):** Print the resolved `$BASE_DIR` for user inspection.
-* **FR-2.6 (`pin [path]` & `unpin [path]`):** Resolve `realpath(path)` (defaulting to `.`) and add or remove it from `<STORE_ROOT>/pinned.json` (idempotent). Print the resolved pinned workspace slug and path. `unpin` leaves stored data in place. The `memoir` skill exposes both as `/memoir pin [path]` and `/memoir unpin [path]`. Existing standalone notes for the pinned root or any folder under it are copied into the pinned scope the next time memoir runs in that folder (FR-1.7).
-* **FR-2.7 (`gc [--prune]`):** Scan `clone.json` and `workspace.json` across `<STORE_ROOT>/repos/` and `<STORE_ROOT>/pinned/`. Report entries whose `root` directory no longer exists on disk (`--dry-run` default); remove those orphaned staging directories when `--prune` is passed.
+* **FR-2.6 (`pin [path]` & `unpin [path]`):** Resolve `realpath(path)` (defaulting to `.`) and add or remove it from `<STORE_ROOT>/pinned.json` (idempotent). Print the resolved pinned workspace slug and path. Pinning moves no fragment: the folder and every folder under it join the group at once (FR-1.4). `unpin` only removes the group's entry; each folder keeps its notes in its own standalone scope, and `pinned/<slug>/` (wiki included) stays. The `memoir` skill exposes both as `/memoir pin [path]` and `/memoir unpin [path]`.
+* **FR-2.7 (`gc [--prune]`):** Scan `clone.json`, `workspace.json`, and `scope.json` across `<STORE_ROOT>/repos/`, `<STORE_ROOT>/pinned/`, and `<STORE_ROOT>/standalone/`. Report entries whose `root` directory no longer exists on disk (`--dry-run` default); remove those orphaned staging directories when `--prune` is passed.
+* **FR-2.8 (`scope`):** Read-only like `path`. Print the wiki scope root (`<STORE_ROOT>/repos/<repo_id>` or `<STORE_ROOT>/pinned/<slug>`) on the first line, then one fragment directory per line: every `clones/*/paths/*` for a repository, every member's `$BASE_DIR` for a pinned group. Print nothing for a directory outside Git and outside any pin.
 
 ### 4.3 LLM Operations & Commands (`skills/memoir/SKILL.md`)
 All v1 fragment schemas and slash commands remain unchanged:
@@ -177,13 +167,13 @@ All v1 fragment schemas and slash commands remain unchanged:
 ## 5. Functional Requirements: `memoir-wiki` Skill (`skills/memoir-wiki`)
 
 ### 5.1 Knowledge Compiler Workflows
-* **FR-4.1 (Scope Resolution):** Resolve the target wiki root for the current working directory:
+* **FR-4.1 (Scope Resolution):** Resolve the target wiki root for the current working directory from `memoir.py scope` (FR-2.8):
   * Git repo → `<STORE_ROOT>/repos/<repo_id>/wiki/`
   * Pinned workspace → `<STORE_ROOT>/pinned/<slug>/wiki/`
   * Standalone directory → inform user that wikis require a Git repo or pinned workspace (`memoir.py pin`).
 * **FR-4.2 (`/memoir-wiki ingest`):**
-  * Scan all `clones/*/paths/*/active/` and `archive/` (or `paths/*/active/` and `archive/` for pinned workspaces).
-  * Compare relative fragment paths and SHA-256 content hashes against `wiki/.ingest-state.json`; skip unchanged files.
+  * Scan `active/` and `archive/` of every fragment directory printed by `memoir.py scope`.
+  * Compare fragment paths relative to the scope root (`../../standalone/<slug>/...` for group members) and SHA-256 content hashes against `wiki/.ingest-state.json`; skip unchanged files.
   * Synthesize new facts into existing wiki pages (updating superseded decisions, flagging contradictions, and adding `[[wikilinks]]`):
     * `decision-*.md` & `archive/` → `wiki/decisions/`
     * `reference-*.md` → `wiki/entities/`
@@ -193,7 +183,7 @@ All v1 fragment schemas and slash commands remain unchanged:
   * **Optional Repo Mirror:** If `<STORE_ROOT>/repos/<repo_id>/meta.json` contains `"sync_to_repo": true`, copy `wiki/*.md` and wiki subdirectories (excluding `.ingest-state.json`) into `<MAIN_ROOT>/<sync_target>` (default `docs/wiki/`).
 * **FR-4.3 (`/memoir-wiki query [question]`):** Read `wiki/index.md` first, traverse 2–4 relevant `[[wikilink]]` pages, answer the question, and file valuable multi-page syntheses back into `wiki/` (registering in `index.md` and `log.md`).
 * **FR-4.4 (`/memoir-wiki lint`):** Audit `wiki/` for orphan pages (zero inbound `[[wikilinks]]`), pages omitted from `index.md`, broken `[[wikilinks]]`, contradictory claims, and stale file paths and commands verified against the current checkout; append findings to `wiki/log.md`.
-* **FR-4.5 (Wiki Isolation & Cross-Wiki Links):** Each Git repository owns exactly one wiki (shared by its clones and worktrees) and each pinned workspace owns exactly one wiki (shared by its subpaths). `ingest`, `query`, and `lint` read fragments only from the current scope and write only to its `wiki/`; wikis are never merged into a global cross-repo wiki. Pages MAY reference another scope with read-only `[[<scope>:<page-path>]]` links (`<scope>` = `repo_id` or pinned slug), resolved to `<STORE_ROOT>/repos/<scope>/wiki/<page-path>.md`, else `<STORE_ROOT>/pinned/<scope>/wiki/<page-path>.md`. Following such a link never edits the other wiki or its `index.md`; `lint` checks that its target exists and excludes it from orphan counts; `sync_to_repo` copies it verbatim.
+* **FR-4.5 (Wiki Isolation & Cross-Wiki Links):** Each Git repository owns exactly one wiki (shared by its clones and worktrees) and each pinned group owns exactly one wiki (shared by its members). `ingest`, `query`, and `lint` read fragments only from the current scope and write only to its `wiki/`; wikis are never merged into a global cross-repo wiki. Pages MAY reference another scope with read-only `[[<scope>:<page-path>]]` links (`<scope>` = `repo_id` or pinned slug), resolved to `<STORE_ROOT>/repos/<scope>/wiki/<page-path>.md`, else `<STORE_ROOT>/pinned/<scope>/wiki/<page-path>.md`. Following such a link never edits the other wiki or its `index.md`; `lint` checks that its target exists and excludes it from orphan counts; `sync_to_repo` copies it verbatim.
 
 ---
 

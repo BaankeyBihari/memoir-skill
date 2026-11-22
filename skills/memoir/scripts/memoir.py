@@ -96,19 +96,44 @@ def update_pin(store: Path, root: Path, add: bool) -> None:
     print(f"{workspace} ({root})")
 
 
+def group_of(store: Path, folder: Path, pins: list[Path] | None = None) -> tuple[Path, Path] | None:
+    """The longest pin containing folder and its group directory, or None (FR-1.4)."""
+    matches = [pin for pin in (pinned_roots(store) if pins is None else pins) if folder.is_relative_to(pin)]
+    if not matches:
+        return None
+    root = max(matches, key=lambda pin: len(pin.parts))
+    return root, store / "pinned" / scope_id(root, root)
+
+
+def members_of(store: Path, base_dir: Path) -> list[Path]:
+    """Every scope whose fragments a read in base_dir covers: the pinned group's members, else base_dir alone."""
+    group = group_of(store, Path.cwd().resolve()) if base_dir.is_relative_to(store / "standalone") else None
+    if group is None:
+        return [base_dir]
+    pins = pinned_roots(store)
+    members = {base_dir}
+    for record in (store / "standalone").glob("*/scope.json"):
+        try:
+            folder = Path(json.loads(record.read_text(encoding="utf-8"))["root"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if (group_of(store, folder, pins) or (None,))[0] == group[0]:
+            members.add(record.parent)
+    return sorted(members)
+
+
 def resolve_store(store: Path, record: bool) -> Path:
     top = git_output("rev-parse", "--show-toplevel")
     if not top:
+        # Non-Git fragments always live in the folder's own scope; a pin only groups scopes.
         cwd = Path.cwd().resolve()
-        matches = [pin for pin in pinned_roots(store) if cwd.is_relative_to(pin)]
-        if not matches:
-            return store / "standalone" / scope_id(cwd, cwd)
-        root = max(matches, key=lambda pin: len(pin.parts))
-        workspace = store / "pinned" / scope_id(root, root)
+        base = store / "standalone" / scope_id(cwd, cwd)
         if record:
-            record_scope(workspace / "workspace.json", root)
-        key = "__".join(cwd.relative_to(root).parts) or "_root"
-        return workspace / "paths" / key
+            record_scope(base / "scope.json", cwd)
+            group = group_of(store, cwd)
+            if group:
+                record_scope(group[1] / "workspace.json", group[0])
+        return base
     toplevel = Path(top).resolve()
     common_path = git_output("rev-parse", "--git-common-dir")
     if not common_path:
@@ -143,14 +168,17 @@ def check_access(base_dir: Path) -> None:
 
 def migrate_legacy(base_dir: Path) -> None:
     """Copy a v1 store into an empty v2 scope, leaving the original in place (FR-1.7)."""
-    root = Path(git_output("rev-parse", "--show-toplevel") or Path.cwd()).resolve()
+    cwd = Path.cwd().resolve()
+    top = git_output("rev-parse", "--show-toplevel")
+    root = Path(top).resolve() if top else cwd
     config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    digest = hashlib.sha256(str(Path.cwd().resolve()).encode()).hexdigest()[:8]
+    digest = hashlib.sha256(str(cwd).encode()).hexdigest()[:8]
     candidates = [root / ".agents" / "memoir", root / ".claude" / "memoir", config / "memoir" / "memories" / digest]
-    # Notes written before this folder was pinned or became a Git repo (FR-2.6).
-    standalone = store_root() / "standalone" / scope_id(Path.cwd().resolve(), Path.cwd().resolve())
-    if standalone != base_dir:
-        candidates.append(standalone)
+    group = None if top else group_of(store_root(), cwd)
+    if group:  # fragments stored inside the pin before pins became groups
+        candidates.append(group[1] / "paths" / ("__".join(cwd.relative_to(group[0]).parts) or "_root"))
+    if top:  # notes written before this folder became a Git repo
+        candidates.append(store_root() / "standalone" / scope_id(cwd, cwd))
     legacy = next((c for c in candidates if (c / "active").is_dir() or (c / "archive").is_dir()), None)
     if legacy is None:
         return
@@ -187,16 +215,25 @@ def generate_prompt(base_dir: Path):
     print("Your Memoir store is active. You must write all files strictly to this absolute path:")
     print(f"{active_dir.absolute()}")
 
-def find_superseded(base_dir: Path) -> dict[str, str]:
-    """Decision files named on a `Supersedes:` line of another active decision, mapped to that decision."""
-    active_dir = base_dir / "active"
-    names = {}
-    for path in sorted(active_dir.glob("decision-*.md")):
-        for line in path.read_text().splitlines():
-            if line.startswith("Supersedes:"):
-                for name in set(SUPERSEDED_RE.findall(line)) - {path.name}:
-                    names[name] = path.name
-    return {n: by for n, by in sorted(names.items()) if (active_dir / n).is_file()}
+def find_superseded(scopes: list[Path]) -> dict[Path, str]:
+    """Active decisions named on another active decision's `Supersedes:` line, mapped to that decision's name.
+
+    A name resolves in the superseding decision's own scope first, else in the only scope holding it (FR-2.3).
+    """
+    found: dict[Path, str] = {}
+    for scope in scopes:
+        for path in sorted((scope / "active").glob("decision-*.md")):
+            for line in path.read_text().splitlines():
+                if not line.startswith("Supersedes:"):
+                    continue
+                for name in sorted(set(SUPERSEDED_RE.findall(line)) - {path.name}):
+                    own = scope / "active" / name
+                    holders = [own] if own.is_file() else [s / "active" / name for s in scopes if (s / "active" / name).is_file()]
+                    if len(holders) == 1:
+                        found[holders[0]] = path.name
+                    elif holders:
+                        print(f"[Memoir] {path.name} supersedes {name}, held by {len(holders)} scopes; skipped.", file=sys.stderr)
+    return dict(sorted(found.items()))
 
 def atomic_write(path: Path, contents: str) -> None:
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
@@ -220,26 +257,19 @@ def add_superseded_by(path: Path, by: str) -> None:
     lines.insert(i, link)
     atomic_write(path, "\n".join(lines) + "\n")
 
-def archive_files(base_dir: Path, target_files: list[str]):
-    active_dir = base_dir / "active"
-    archive_dir = base_dir / "archive"
-
-    if not target_files:
+def archive_files(targets: list[tuple[str, Path]]):
+    """Move each (name, active path) into the archive/ beside it."""
+    if not targets:
         print("[Memoir] Archived 0 files.")
         return
-
-    if not active_dir.exists():
-        print("[Memoir] Error: Active directory not found. Run init first.")
-        sys.exit(1)
 
     today = datetime.now().astimezone().strftime("%Y%m%d")
     archived_count = 0
     failed = False
 
-    for filename in target_files:
-        source_path = active_dir / filename
+    for filename, source_path in targets:
         dest_name = f"{today}-{filename}"
-        dest_path = archive_dir / dest_name
+        dest_path = source_path.parent.parent / "archive" / dest_name
         if not ARCHIVABLE_RE.match(filename):
             print(f"Not an archivable fragment name: {filename}")
             failed = True
@@ -258,11 +288,11 @@ def archive_files(base_dir: Path, target_files: list[str]):
     if failed:
         sys.exit(1)
 
-def generate_resume(base_dir: Path):
-    active_dir = base_dir / "active"
-    state_file = active_dir / "state-current.md"
+def generate_resume(base_dir: Path, scopes: list[Path]):
+    state_file = base_dir / "active" / "state-current.md"
     files = [state_file] if state_file.exists() else []
-    files += sorted(p for p in active_dir.glob("*.md") if p != state_file)
+    # Other group members' state belongs to their own folders (FR-2.4).
+    files += sorted(p for s in scopes for p in (s / "active").glob("*.md") if p.name != "state-current.md")
 
     generate_prompt(base_dir)
     if not files:
@@ -275,7 +305,7 @@ def generate_resume(base_dir: Path):
     print("\nBased on the state file, resume the current task.")
 
 def collect_orphans(store: Path, prune: bool) -> None:
-    for pattern in ("repos/*/clones/*/clone.json", "pinned/*/workspace.json"):
+    for pattern in ("repos/*/clones/*/clone.json", "pinned/*/workspace.json", "standalone/*/scope.json"):
         for record in sorted(store.glob(pattern)):
             # A linked repo, scope or record could redirect pruning outside the store.
             if record.resolve() != record:
@@ -297,6 +327,21 @@ def collect_orphans(store: Path, prune: bool) -> None:
                 shutil.rmtree(record.parent)
 
 
+def print_scope(store: Path, base_dir: Path) -> None:
+    """Wiki scope root, then each fragment directory it compiles (FR-2.8)."""
+    if base_dir.is_relative_to(store / "repos"):
+        repo = base_dir.parents[3]
+        print(repo)
+        for path in sorted(repo.glob("clones/*/paths/*")):
+            print(path)
+        return
+    group = group_of(store, Path.cwd().resolve())
+    if group:
+        print(group[1])
+        for scope in members_of(store, base_dir):
+            print(scope)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Memoir Management CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -308,6 +353,8 @@ def main():
     archive_parser.add_argument("--superseded", action="store_true", help="Archive every decision named in an active decision's Supersedes: line")
 
     subparsers.add_parser("path", help="Print the resolved base directory")
+
+    subparsers.add_parser("scope", help="Print the wiki scope root and the fragment directories it covers")
     
     subparsers.add_parser("prompt", help="Print the absolute path instruction for LLM injection")
     
@@ -331,27 +378,31 @@ def main():
     if args.command in {"pin", "unpin"}:
         update_pin(store_root(), args.directory.expanduser().resolve(), args.command == "pin")
         return
-    base_dir = resolve_store(store_root(), args.command != "path")
-    if args.command != "path":
+    read_only = args.command in {"path", "scope"}
+    base_dir = resolve_store(store_root(), not read_only)
+    if not read_only:
         check_access(base_dir)
         migrate_legacy(base_dir)
 
     if args.command == "path":
         print(base_dir.absolute())
+    elif args.command == "scope":
+        print_scope(store_root(), base_dir)
     elif args.command == "init":
         init_store(base_dir)
     elif args.command == "archive":
         if not args.files and not args.superseded:
             parser.error("archive needs filenames or --superseded")
-        superseded = find_superseded(base_dir) if args.superseded else {}
+        superseded = find_superseded(members_of(store_root(), base_dir)) if args.superseded else {}
         # Back-link the active copy before the move: a crash leaves a duplicate, never a lost fragment.
-        for name, by in superseded.items():
-            add_superseded_by(base_dir / "active" / name, by)
-        archive_files(base_dir, args.files + list(superseded))
+        for path, by in superseded.items():
+            add_superseded_by(path, by)
+        targets = [(f, base_dir / "active" / f) for f in args.files] + [(p.name, p) for p in superseded]
+        archive_files(targets)
     elif args.command == "prompt":
         generate_prompt(base_dir)
     elif args.command == "resume":
-        generate_resume(base_dir)
+        generate_resume(base_dir, members_of(store_root(), base_dir))
 
 if __name__ == "__main__":
     try:
