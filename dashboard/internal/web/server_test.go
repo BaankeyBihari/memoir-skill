@@ -101,6 +101,9 @@ func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
 	if health["status"] != "ok" || health["store_exists"] != true {
 		t.Fatalf("unexpected health payload: %#v", health)
 	}
+	if health["app"] != "memoir-ui" || health["pid"] != float64(os.Getpid()) || health["version"] != "" {
+		t.Fatalf("health missing app/pid/version: %#v", health)
+	}
 }
 
 func TestServerTreeAndFileEndpoints(t *testing.T) {

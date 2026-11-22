@@ -27,6 +27,7 @@ type Server struct {
 	Port      int
 	Hub       *Hub
 	Search    *store.SearchIndex
+	Version   string // reported by /api/health so `memoir-ui status` can show it
 }
 
 // NewServer constructs a dashboard HTTP server.
@@ -116,6 +117,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"store":        s.StoreRoot,
 		"store_exists": exists,
 		"port":         s.Port,
+		"app":          "memoir-ui",
+		"pid":          os.Getpid(),
+		"version":      s.Version,
 	})
 }
 
