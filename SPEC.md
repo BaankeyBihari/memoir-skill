@@ -71,7 +71,9 @@ with runs outside `[a-z0-9]` replaced by one hyphen and outer hyphens trimmed
   `__`. Without a match, hash the current directory and use the flat scope.
 * v1 stores (`<toplevel-or-cwd>/.agents/memoir`, `.claude/memoir`,
   `~/.config/memoir/memories/<sha8>`) are copied into an empty resolved scope
-  on first use and left in place (SRD FR-1.7). A store root containing
+  on first use and left in place (SRD FR-1.7). The current directory's
+  standalone scope is copied the same way once that directory is pinned or
+  becomes a Git repository. A store root containing
   `active/` is a v1 base directory and is rejected (SRD FR-1.8).
 
 ## Wiki scopes and links

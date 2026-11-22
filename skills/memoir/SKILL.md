@@ -1,6 +1,6 @@
 ---
 name: memoir
-description: Persist decisions, logs, references, feedbacks and working state to project-scoped files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|feedback|state|capture|coach|reload, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
+description: Persist decisions, logs, references, feedbacks and working state to project-scoped files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|feedback|state|capture|coach|reload|pin|unpin, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
 ---
 
 # Role
@@ -131,6 +131,9 @@ Execute each command with your native file-writing tools, targeting the absolute
   3. If it prints "No recorded session found", reply "No recorded session in <path>. Starting fresh." and stop.
   4. Otherwise read every file it lists, in order, starting with `state-current.md`.
   5. Reply with the restored Goal and Next Action, the files archived in step 1, and how many decision, reference, log and feedback files were loaded. Wait for the user before acting on the Next Action.
+
+- `/memoir pin [path]`: share one store across a non-Git workspace and every folder under it. Run `python3 <this-skill-dir>/scripts/memoir.py pin <path>` (default: the current directory) and reply with the workspace path it prints. Then tell the user that notes a folder already has are copied into the workspace the next time memoir runs in that folder, and the old copy stays until they delete it.
+- `/memoir unpin [path]`: run `python3 <this-skill-dir>/scripts/memoir.py unpin <path>` and reply with the path it prints. The workspace's notes stay in the store.
 
 ## Always On
 To make memoir the default memory, the user pastes the block in `references/always-on.md` into their `CLAUDE.md` or `AGENTS.md`.

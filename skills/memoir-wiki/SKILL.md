@@ -13,7 +13,7 @@ Resolve the wiki from the CLI's output, never from a guessed or relative path (N
 2. Derive the scope root from the printed path. Find the store's `repos/`, `pinned/` or `standalone/` segment, then:
    - `<STORE_ROOT>/repos/<repo_id>/clones/<clone>/paths/<key>`: the scope root is `<STORE_ROOT>/repos/<repo_id>`. This is a Git repository, and its wiki is shared by every clone and worktree.
    - `<STORE_ROOT>/pinned/<slug>/paths/<key>`: the scope root is `<STORE_ROOT>/pinned/<slug>`. This is a pinned workspace, and its wiki is shared by every subpath.
-   - `<STORE_ROOT>/standalone/<slug>`: stop. Reply: "memoir-wiki needs a Git repository or a pinned workspace. Run `python3 <memoir-skill-dir>/scripts/memoir.py pin <workspace-root>`, then rerun." Pinning applies only to fragments written after it. Fragments already in the standalone scope stay where they are.
+   - `<STORE_ROOT>/standalone/<slug>`: stop. Reply: "memoir-wiki needs a Git repository or a pinned workspace. Run `python3 <memoir-skill-dir>/scripts/memoir.py pin <workspace-root>`, then rerun." Fragments already in a folder's standalone scope are copied into the pinned workspace the next time memoir runs in that folder.
 3. The wiki root is `<scope root>/wiki/`. Create it on first write.
 
 ## Isolation

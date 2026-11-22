@@ -147,6 +147,10 @@ def migrate_legacy(base_dir: Path) -> None:
     config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     digest = hashlib.sha256(str(Path.cwd().resolve()).encode()).hexdigest()[:8]
     candidates = [root / ".agents" / "memoir", root / ".claude" / "memoir", config / "memoir" / "memories" / digest]
+    # Notes written before this folder was pinned or became a Git repo (FR-2.6).
+    standalone = store_root() / "standalone" / scope_id(Path.cwd().resolve(), Path.cwd().resolve())
+    if standalone != base_dir:
+        candidates.append(standalone)
     legacy = next((c for c in candidates if (c / "active").is_dir() or (c / "archive").is_dir()), None)
     if legacy is None:
         return
