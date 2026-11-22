@@ -7,6 +7,7 @@ ruff = "latest"
 shellcheck = "latest"
 "npm:markdownlint-cli2" = "latest"
 typos = "latest"
+pre-commit = "latest"
 
 [env]
 VERSION = "dev"
@@ -68,6 +69,10 @@ PY
 [tasks.lint]
 description = "Run all Go, Python, Shell, Markdown, typos, and skill lint checks"
 depends = ["lint:go", "lint:py", "lint:shell", "lint:md", "lint:typos", "lint:skills"]
+
+[tasks.hooks]
+description = "Install git pre-commit hooks"
+run = "pre-commit install"
 
 [tasks.clean]
 description = "Remove build artifacts in dist/ and clean Go test cache"
