@@ -46,13 +46,6 @@ Uninstaller flags:
 | `--store <path>` | Read manifest from a custom store path instead of `~/.memoir` |
 | `--dry-run` | Print planned removals and config reversions without modifying disk |
 
-### Manual skill symlinks (Claude Code)
-
-```sh
-ln -s "$PWD/skills/memoir" ~/.claude/skills/memoir
-ln -s "$PWD/skills/memoir-wiki" ~/.claude/skills/memoir-wiki
-```
-
 ### Antigravity (`agy`)
 
 ```sh
