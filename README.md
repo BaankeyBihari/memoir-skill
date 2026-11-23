@@ -14,7 +14,7 @@ Full specifications: [system_requirements_document_memoir_skill.md](system_requi
 
 Requires Python 3.11+. [`uv`](https://docs.astral.sh/uv/) is optional; Go 1.23+ is only needed if building `memoir-ui` from source when no release binary matches.
 
-**Unified installer** (installs both skills to `~/.agents/skills/`, symlinks detected agent CLIs, configures store permissions for `~/.memoir` in detected CLI configs, and installs `memoir-ui` to `~/.local/bin/memoir-ui` with SHA-256 verification):
+**Unified installer** (copies both skills to `~/.agents/skills/` and detected agent CLIs, configures store permissions for `~/.memoir` in detected CLI configs, installs `memoir-ui` to `~/.local/bin/memoir-ui` with SHA-256 verification, and records written artifacts in `~/.memoir/manifest.json`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BaankeyBihari/memoir-skill/main/scripts/install.sh | bash
@@ -28,6 +28,23 @@ Installer flags:
 | `--ui-only` | Install only the `memoir-ui` binary |
 | `--store <path>` | Initialize a custom store path instead of `~/.memoir` |
 | `--version <YYYY.M.N>` | Pin a specific release tag (e.g. `2026.11.3`) |
+
+### Uninstall
+
+Uses `$MEMOIR_STORE/manifest.json` (`~/.memoir/manifest.json` by default) to remove copied skills, `memoir-ui`, empty installer-created parent directories, and CLI config entries added during install while preserving all stored memories and wikis:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BaankeyBihari/memoir-skill/main/scripts/uninstall.sh | bash
+```
+
+Uninstaller flags:
+
+| Flag | Effect |
+|---|---|
+| `--skills-only` | Remove installed skills and revert CLI store permissions only |
+| `--ui-only` | Remove the `memoir-ui` binary only |
+| `--store <path>` | Read manifest from a custom store path instead of `~/.memoir` |
+| `--dry-run` | Print planned removals and config reversions without modifying disk |
 
 ### Manual skill symlinks (Claude Code)
 

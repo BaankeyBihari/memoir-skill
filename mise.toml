@@ -61,6 +61,7 @@ for skill in (Path("skills/memoir"), Path("skills/memoir-wiki")):
     assert 0 < len(desc) <= 1024, f"description length {len(desc)}"
 assert os.access("skills/memoir/scripts/memoir.py", os.X_OK), "memoir.py not executable"
 assert os.access("scripts/install.sh", os.X_OK), "scripts/install.sh not executable"
+assert os.access("scripts/uninstall.sh", os.X_OK), "scripts/uninstall.sh not executable"
 assert Path("skills/memoir-wiki/references/schema.md").is_file(), "memoir-wiki schema missing"
 print("skill ok")
 PY

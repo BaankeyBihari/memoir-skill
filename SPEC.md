@@ -5,6 +5,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 ```text
 ~/.memoir/
 ├── config.toml                                    # Optional global configuration
+├── manifest.json                                  # Installer artifact & CLI config-edit rollback manifest
 ├── pinned.json                                    # Canonical realpaths of user-pinned non-Git roots
 ├── repos/                                         # Scope 1: Git-backed repositories
 │   └── <repo_id>/                                 # e.g., github.com__baankeybihari__memoir-skill
@@ -96,7 +97,7 @@ wiki's `index.md` or edit its pages.
 
 ## JSON records
 
-All five files are UTF-8 JSON. Missing pinned.json means an empty array.
+All six files are UTF-8 JSON. Missing pinned.json means an empty array.
 
 | File | JSON shape | Meaning |
 | --- | --- | --- |
@@ -105,6 +106,7 @@ All five files are UTF-8 JSON. Missing pinned.json means an empty array.
 | workspace.json | `{"root":"/workspace","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical pinned root and ISO-8601 timestamp |
 | meta.json | `{"remote":"https://host/owner/repo","sync_to_repo":false,"sync_target":"docs/wiki"}` | Optional repo configuration. Remote is a string, mirror flag a boolean (default false), target a repo-relative directory string (default docs/wiki). |
 | pinned.json | `["/absolute/workspace"]` | Array of unique canonical absolute directory strings |
+| manifest.json | `{"schema_version":1,"store":"/path","updated_at":"...","artifacts":[...],"config_edits":[...]}` | Installer ledger of copied skill directories, `memoir-ui` binary, created parent directories, and CLI config edits for rollback by `scripts/uninstall.sh`. |
 
 ## Fragment headers
 

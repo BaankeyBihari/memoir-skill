@@ -96,7 +96,7 @@ configure_cli_store_access() {
         echo "[Memoir] python3 not found; skipping automatic CLI store permission setup for $store" >&2
         return 0
     fi
-    python3 - "$store" "$HOME" <<'PY'
+    python3 - "$store" "$HOME" "$tmp/config-edits.jsonl" <<'PY'
 import json
 import os
 import re
@@ -178,11 +178,12 @@ def same_claude_path(entry: object, store_real: Path, home_real: Path) -> bool:
         return False
 
 
-def configure_claude(home_real: Path, store_real: Path) -> None:
+def configure_claude(home_real: Path, store_real: Path, edits: list[dict]) -> None:
     claude_dir = home_real / ".claude"
     if not claude_dir.is_dir():
         return
     settings_path = claude_dir / "settings.json"
+    file_existed = settings_path.exists()
     data = load_json_dict(settings_path, "Claude Code settings")
     if data is None:
         return
@@ -218,22 +219,28 @@ def configure_claude(home_real: Path, store_real: Path) -> None:
     else:
         claude_entry = f"//{store_real.as_posix().lstrip('/')}"
 
-    changed = False
+    added_entries: list[dict[str, str]] = []
     perms = data.setdefault("permissions", {})
     add_dirs = perms.setdefault("additionalDirectories", [])
     if not any(same_claude_path(item, store_real, home_real) for item in add_dirs):
         add_dirs.append(claude_entry)
-        changed = True
+        added_entries.append({"key": "permissions.additionalDirectories", "value": claude_entry})
 
     sandbox = data.setdefault("sandbox", {})
     fs_cfg = sandbox.setdefault("filesystem", {})
     allow_write = fs_cfg.setdefault("allowWrite", [])
     if not any(same_claude_path(item, store_real, home_real) for item in allow_write):
         allow_write.append(claude_entry)
-        changed = True
+        added_entries.append({"key": "sandbox.filesystem.allowWrite", "value": claude_entry})
 
-    if changed:
+    if added_entries:
         atomic_write_text(settings_path, json.dumps(data, indent=2) + "\n")
+        edits.append({
+            "cli": "claude",
+            "path": settings_path.resolve().as_posix(),
+            "created_file": not file_existed,
+            "entries": added_entries,
+        })
         print(f"[Memoir] Configured Claude Code access in {settings_path} ({claude_entry})")
 
 
@@ -391,7 +398,7 @@ def format_toml_array(items: list[str], indent: str, multiline: bool) -> str:
     return "\n".join(lines)
 
 
-def configure_codex(home_real: Path, store_real: Path) -> None:
+def configure_codex(home_real: Path, store_real: Path, edits: list[dict]) -> None:
     codex_dir = home_real / ".codex"
     if not codex_dir.is_dir():
         return
@@ -400,8 +407,9 @@ def configure_codex(home_real: Path, store_real: Path) -> None:
         return
 
     config_path = codex_dir / "config.toml"
+    file_existed = config_path.exists()
     text = ""
-    if config_path.exists():
+    if file_existed:
         try:
             text = config_path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -447,14 +455,21 @@ def configure_codex(home_real: Path, store_real: Path) -> None:
         return
 
     atomic_write_text(config_path, updated)
+    edits.append({
+        "cli": "codex",
+        "path": config_path.resolve().as_posix(),
+        "created_file": not file_existed,
+        "entries": [{"key": "sandbox_workspace_write.writable_roots", "value": store_abs}],
+    })
     print(f"[Memoir] Configured Codex CLI access in {config_path} ({store_abs})")
 
 
-def configure_antigravity(home_real: Path, store_real: Path) -> None:
+def configure_antigravity(home_real: Path, store_real: Path, edits: list[dict]) -> None:
     agy_dir = home_real / ".gemini" / "antigravity-cli"
     if not agy_dir.is_dir():
         return
     settings_path = agy_dir / "settings.json"
+    file_existed = settings_path.exists()
     data = load_json_dict(settings_path, "Antigravity CLI settings")
     if data is None:
         return
@@ -490,10 +505,16 @@ def configure_antigravity(home_real: Path, store_real: Path) -> None:
     entry = f"write_file({store_real.as_posix()})"
     allow.append(entry)
     atomic_write_text(settings_path, json.dumps(data, indent=2) + "\n", default_mode=0o600)
+    edits.append({
+        "cli": "antigravity",
+        "path": settings_path.resolve().as_posix(),
+        "created_file": not file_existed,
+        "entries": [{"key": "permissions.allow", "value": entry}],
+    })
     print(f"[Memoir] Configured Antigravity CLI access in {settings_path} ({entry})")
 
 
-def configure_pi(home_real: Path, store_real: Path) -> None:
+def configure_pi(home_real: Path, store_real: Path, edits: list[dict]) -> None:
     sandbox_path = home_real / ".pi" / "agent" / "sandbox.json"
     if not sandbox_path.is_file():
         return
@@ -519,22 +540,270 @@ def configure_pi(home_real: Path, store_real: Path) -> None:
     store_abs = store_real.as_posix()
     allow_write.append(store_abs)
     atomic_write_text(sandbox_path, json.dumps(data, indent=2) + "\n")
+    edits.append({
+        "cli": "pi",
+        "path": sandbox_path.resolve().as_posix(),
+        "created_file": False,
+        "entries": [{"key": "allowWrite", "value": store_abs}],
+    })
     print(f"[Memoir] Configured Pi sandbox access in {sandbox_path} ({store_abs})")
 
 
 def main() -> None:
-    store_arg, home_arg = sys.argv[1], sys.argv[2]
+    store_arg, home_arg, edits_out = sys.argv[1], sys.argv[2], Path(sys.argv[3])
     home_real = Path(home_arg).resolve()
     store_real = expand_home(store_arg, home_real).resolve()
-    configure_claude(home_real, store_real)
-    configure_codex(home_real, store_real)
-    configure_antigravity(home_real, store_real)
-    configure_pi(home_real, store_real)
+    edits: list[dict] = []
+    configure_claude(home_real, store_real, edits)
+    configure_codex(home_real, store_real, edits)
+    configure_antigravity(home_real, store_real, edits)
+    configure_pi(home_real, store_real, edits)
+    if edits:
+        with edits_out.open("a", encoding="utf-8") as fh:
+            for item in edits:
+                fh.write(json.dumps(item) + "\n")
 
 
 if __name__ == "__main__":
     main()
 PY
+}
+
+record_missing_parents() {
+    local cur=$1
+    local home_clean=${HOME%/}
+    local out=
+    while [[ -n $cur && $cur != "$home_clean" && $cur != / ]]; do
+        if [[ -e $cur || -L $cur ]]; then
+            break
+        fi
+        out="${out:+$out$'\n'}$cur"
+        [[ $cur == */* ]] || break
+        cur=${cur%/*}
+        [[ -z $cur ]] && cur=/
+    done
+    printf '%s' "$out"
+}
+
+install_skill_copy() {
+    local src_dir=$1
+    local dest_parent=$2
+    local skill_name=$3
+    local allow_legacy_symlink=$4
+    local from_release=$5
+    local dest="$dest_parent/$skill_name"
+    local legacy_target="$HOME/.agents/skills/$skill_name"
+
+    if [[ -L $dest ]]; then
+        if [[ $allow_legacy_symlink == true && -e $legacy_target && $dest -ef $legacy_target ]]; then
+            rm -f "$dest"
+        else
+            echo "Existing symlink at $dest; move or remove it before installing" >&2
+            exit 1
+        fi
+    elif [[ -e $dest && ! -d $dest ]]; then
+        echo "Existing non-directory at $dest; move it before installing" >&2
+        exit 1
+    fi
+
+    mkdir -p "$dest_parent"
+    local stage
+    stage=$(mktemp -d "$dest_parent/.${skill_name}.stage.XXXXXX")
+    chmod 755 "$stage"
+    if ! cp -R "$src_dir/." "$stage/"; then
+        rm -rf "$stage"
+        exit 1
+    fi
+    if [[ $from_release != true ]]; then
+        rm -f "$stage/VERSION"  # a checkout has none; keep a stale release stamp from lingering
+    fi
+    rm -rf "$dest"
+    mv "$stage" "$dest"
+}
+
+record_manifest() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+    python3 - "$store" "$HOME" "$tmp/artifacts.dat" "$tmp/parents.dat" "$tmp/config-edits.jsonl" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def expand_home(raw: str, home: Path) -> Path:
+    if raw == "~":
+        return home
+    if raw.startswith("~/"):
+        return home / raw[2:]
+    return Path(raw)
+
+
+def canon_path(raw: str | Path) -> Path:
+    p = Path(raw)
+    missing: list[str] = []
+    cur = p
+    while not cur.exists() and not cur.is_symlink():
+        parent = cur.parent
+        if parent == cur:
+            break
+        missing.append(cur.name)
+        cur = parent
+    resolved = cur.parent.resolve() / cur.name if cur.is_symlink() else cur.resolve()
+    for part in reversed(missing):
+        resolved = resolved / part
+    return resolved
+
+
+def normalize_parents(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    canon_list: list[str] = []
+    for raw in paths:
+        if not raw:
+            continue
+        p = canon_path(raw).as_posix()
+        if p not in seen:
+            seen.add(p)
+            canon_list.append(p)
+    canon_list.sort(key=lambda item: (len(Path(item).parts), len(item)), reverse=True)
+    return canon_list
+
+
+def atomic_write_text(path: Path, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        try:
+            tmp.write(contents)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
+def main() -> None:
+    store_arg, home_arg, art_file, par_file, edit_file = sys.argv[1:6]
+    home_real = Path(home_arg).resolve()
+    store_real = expand_home(store_arg, home_real).resolve()
+    manifest_path = store_real / "manifest.json"
+
+    existing: dict = {}
+    if manifest_path.exists():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded.get("schema_version") == 1:
+                existing = loaded
+            else:
+                print(f"[Memoir] Warning: replacing incompatible manifest in {manifest_path}", file=sys.stderr)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"[Memoir] Warning: replacing unreadable manifest in {manifest_path}: {exc}", file=sys.stderr)
+
+    art_by_path: dict[str, dict] = {}
+    for item in existing.get("artifacts", []):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            continue
+        norm_path = canon_path(item["path"]).as_posix()
+        rec = dict(item)
+        rec["path"] = norm_path
+        rec["created_parents"] = normalize_parents([str(p) for p in item.get("created_parents", []) if p])
+        art_by_path[norm_path] = rec
+
+    parents_by_art: dict[str, list[str]] = {}
+    par_path = Path(par_file)
+    if par_path.exists():
+        for line in par_path.read_text(encoding="utf-8").splitlines():
+            if not line or "\x1f" not in line:
+                continue
+            art_raw, parent_raw = line.split("\x1f", 1)
+            parents_by_art.setdefault(art_raw, []).append(parent_raw)
+
+    art_path = Path(art_file)
+    if art_path.exists():
+        for line in art_path.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            parts = line.split("\x1f")
+            if len(parts) != 5:
+                continue
+            kind, component, name, raw_target, ver = parts
+            norm_path = canon_path(raw_target).as_posix()
+            prev = art_by_path.get(norm_path, {})
+            combined_parents = normalize_parents(
+                list(prev.get("created_parents", [])) + parents_by_art.get(raw_target, [])
+            )
+            rec = {
+                "kind": kind,
+                "component": component,
+                "path": norm_path,
+                "version": ver,
+                "created_parents": combined_parents,
+            }
+            if kind == "skill_dir":
+                rec["skill"] = name
+            else:
+                rec["name"] = name
+            art_by_path[norm_path] = rec
+
+    edit_by_key: dict[tuple[str, str], dict] = {}
+    for item in existing.get("config_edits", []):
+        if not isinstance(item, dict):
+            continue
+        cli = item.get("cli")
+        raw_cfg = item.get("path")
+        if not isinstance(cli, str) or not isinstance(raw_cfg, str):
+            continue
+        norm_cfg = canon_path(raw_cfg).as_posix()
+        edit_by_key[(cli, norm_cfg)] = {
+            "cli": cli,
+            "path": norm_cfg,
+            "created_file": bool(item.get("created_file", False)),
+            "entries": list(item.get("entries", [])),
+        }
+
+    edit_path = Path(edit_file)
+    if edit_path.exists():
+        for line in edit_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            cli = item["cli"]
+            norm_cfg = canon_path(item["path"]).as_posix()
+            key = (cli, norm_cfg)
+            prev = edit_by_key.get(key, {"cli": cli, "path": norm_cfg, "created_file": False, "entries": []})
+            seen_entries = {(e.get("key"), e.get("value")) for e in prev["entries"] if isinstance(e, dict)}
+            merged_entries = list(prev["entries"])
+            for entry in item.get("entries", []):
+                ek = (entry.get("key"), entry.get("value"))
+                if ek not in seen_entries:
+                    seen_entries.add(ek)
+                    merged_entries.append(entry)
+            edit_by_key[key] = {
+                "cli": cli,
+                "path": norm_cfg,
+                "created_file": bool(prev["created_file"]) or bool(item.get("created_file", False)),
+                "entries": merged_entries,
+            }
+
+    manifest = {
+        "schema_version": 1,
+        "store": store_real.as_posix(),
+        "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "artifacts": list(art_by_path.values()),
+        "config_edits": list(edit_by_key.values()),
+    }
+    atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()
+PY
+    : > "$tmp/artifacts.dat"
+    : > "$tmp/parents.dat"
+    : > "$tmp/config-edits.jsonl"
 }
 
 if ! mkdir -p "$store"/{repos,pinned,standalone} 2>/dev/null; then
@@ -550,6 +819,7 @@ installed=()
 
 if "$skills"; then
     skills_root=
+    from_release=false
     if [[ -z $version && -n $src && -d $src/skills/memoir && -d $src/skills/memoir-wiki ]]; then
         skills_root="$src/skills"
     elif fetch_checksums && curl -fsSL "$release_base/memoir-skills.tar.gz" -o "$tmp/memoir-skills.tar.gz"; then
@@ -557,6 +827,7 @@ if "$skills"; then
         mkdir -p "$tmp/skills"
         tar -xzf "$tmp/memoir-skills.tar.gz" -C "$tmp/skills"
         skills_root="$tmp/skills"
+        from_release=true
     elif [[ -n $version ]]; then
         echo "Failed to download memoir-skills.tar.gz for release $version" >&2
         exit 1
@@ -565,29 +836,41 @@ if "$skills"; then
         skills_root="$src/skills"
     fi
 
-    mkdir -p "$HOME/.agents/skills"
-    for name in memoir memoir-wiki; do
-        dest="$HOME/.agents/skills/$name"
-        if [[ -L $dest ]]; then
-            echo "Existing symlink at $dest; choose a directory for the installed copy" >&2
-            exit 1
+    skill_parents=("$HOME/.agents/skills")
+    allow_migration=(false)
+    for cli_root in "$HOME/.claude" "$HOME/.codex" "$HOME/.pi/agent" "$HOME/.gemini/antigravity"; do
+        if [[ -d $cli_root ]]; then
+            skill_parents+=("$cli_root/skills")
+            allow_migration+=(true)
         fi
-        mkdir -p "$dest"
-        rm -f "$dest/VERSION"  # a checkout has none; keep a stale release stamp from lingering
-        cp -R "$skills_root/$name/." "$dest/"
-        installed+=("$name $(cat "$dest/VERSION" 2>/dev/null || echo dev)")
-        for dir in "$HOME"/{.claude/skills,.codex/skills,.pi/agent/skills,.gemini/antigravity/skills}; do
-            [[ -d $dir ]] || continue
-            link="$dir/$name"
-            [[ $link -ef $dest ]] && continue
-            if [[ -e $link && ! -L $link ]]; then
-                echo "Existing skill at $link; move it before installing" >&2
-                exit 1
-            fi
-            ln -snf "$dest" "$link"
-        done
     done
+
+    idx=0
+    while (( idx < ${#skill_parents[@]} )); do
+        dest_parent=${skill_parents[$idx]}
+        migrate=${allow_migration[$idx]}
+        missing_parents=$(record_missing_parents "$dest_parent")
+        for name in memoir memoir-wiki; do
+            install_skill_copy "$skills_root/$name" "$dest_parent" "$name" "$migrate" "$from_release"
+            dest="$dest_parent/$name"
+            ver=$(cat "$dest/VERSION" 2>/dev/null || echo dev)
+            printf '%s\037%s\037%s\037%s\037%s\n' "skill_dir" "skills" "$name" "$dest" "$ver" >> "$tmp/artifacts.dat"
+            if [[ -n $missing_parents ]]; then
+                while IFS= read -r mp; do
+                    if [[ -n $mp ]]; then
+                        printf '%s\037%s\n' "$dest" "$mp" >> "$tmp/parents.dat"
+                    fi
+                done <<< "$missing_parents"
+            fi
+            if [[ $dest_parent == "$HOME/.agents/skills" ]]; then
+                installed+=("$name $ver")
+            fi
+        done
+        idx=$((idx + 1))
+    done
+
     configure_cli_store_access
+    record_manifest
 fi
 
 if "$ui"; then
@@ -613,9 +896,20 @@ if "$ui"; then
         (cd "$src/dashboard" && GOBIN="$tmp/bin" go install -ldflags="-s -w -X main.version=${version:-dev}" .)
         mv "$tmp"/bin/* "$tmp/memoir-ui"
     fi
+    ui_missing_parents=$(record_missing_parents "$HOME/.local/bin")
     mkdir -p "$HOME/.local/bin"
     install -m 755 "$tmp/memoir-ui" "$HOME/.local/bin/memoir-ui"
-    installed+=("memoir-ui $("$HOME/.local/bin/memoir-ui" --version 2>/dev/null || echo unknown)")
+    ui_ver=$("$HOME/.local/bin/memoir-ui" --version 2>/dev/null || echo unknown)
+    installed+=("memoir-ui $ui_ver")
+    printf '%s\037%s\037%s\037%s\037%s\n' "binary" "ui" "memoir-ui" "$HOME/.local/bin/memoir-ui" "$ui_ver" >> "$tmp/artifacts.dat"
+    if [[ -n $ui_missing_parents ]]; then
+        while IFS= read -r mp; do
+            if [[ -n $mp ]]; then
+                printf '%s\037%s\n' "$HOME/.local/bin/memoir-ui" "$mp" >> "$tmp/parents.dat"
+            fi
+        done <<< "$ui_missing_parents"
+    fi
+    record_manifest
 fi
 
 printf -v summary '%s, ' "${installed[@]}"

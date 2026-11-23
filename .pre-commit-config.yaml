@@ -47,5 +47,5 @@ repos:
         name: skills validate
         entry: mise run lint:skills
         language: system
-        files: ^(skills/|scripts/install\.sh$)
+        files: ^(skills/|scripts/(install|uninstall)\.sh$)
         pass_filenames: false

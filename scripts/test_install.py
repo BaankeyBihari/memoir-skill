@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("install.sh")
+UNINSTALL_SCRIPT = Path(__file__).with_name("uninstall.sh")
 REPO_ROOT = SCRIPT.resolve().parent.parent
 
 
@@ -91,27 +92,47 @@ class TestInstaller(unittest.TestCase):
             for parent in parents:
                 parent.mkdir(parents=True)
             store = tmp_path / "custom store"
-            for _ in range(2):
-                res = subprocess.run(
-                    [str(SCRIPT), "--skills-only", "--store", str(store)],
-                    env=env,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-                # A checkout has no VERSION; a stamp left by an earlier release must not survive.
-                (home / ".agents/skills/memoir/VERSION").write_text("2026.1.1\n")
+            subprocess.run(
+                [str(SCRIPT), "--skills-only", "--store", str(store)],
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            # A checkout has no VERSION; stale stamps in canonical or CLI copies must not survive re-install.
+            (home / ".agents/skills/memoir/VERSION").write_text("2026.1.1\n")
+            (parents[0] / "memoir/VERSION").write_text("2026.1.1\n")
+            res = subprocess.run(
+                [str(SCRIPT), "--skills-only", "--store", str(store)],
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(res.stdout.splitlines()[-1], "Installed memoir dev, memoir-wiki dev")
-            for parent in parents:
+            all_skill_parents = [home / ".agents/skills", *parents]
+            for parent in all_skill_parents:
                 for name in ("memoir", "memoir-wiki"):
-                    self.assertEqual(
-                        (parent / name).resolve(),
-                        (home / ".agents/skills" / name).resolve(),
-                    )
+                    target = parent / name
+                    self.assertTrue(target.is_dir(), target)
+                    self.assertFalse(target.is_symlink(), f"{target} must be a copy, not a symlink")
+                    self.assertFalse((target / "VERSION").exists(), target)
             self.assertTrue((parents[0] / "memoir/scripts/memoir.py").is_file())
             self.assertTrue((parents[0] / "memoir-wiki/references/schema.md").is_file())
             self.assertTrue((store / "standalone").is_dir())
             self.assertFalse((home / ".local/bin").exists())
+
+            manifest = json.loads((store / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], 1)
+            self.assertEqual(manifest["store"], store.resolve().as_posix())
+            art_paths = {item["path"] for item in manifest["artifacts"]}
+            for parent in all_skill_parents:
+                for name in ("memoir", "memoir-wiki"):
+                    self.assertIn((parent / name).resolve().as_posix(), art_paths)
+            self.assertEqual(
+                {item["cli"] for item in manifest["config_edits"]},
+                {"claude", "codex"},
+            )
 
     def test_cli_configs_created_and_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -493,6 +514,295 @@ class TestInstaller(unittest.TestCase):
             }
             subprocess.run([str(SCRIPT), "--ui-only"], env=env, check=True)
             self.assertEqual((home / ".local/bin/memoir-ui").read_text(), "built-binary")
+
+    def test_install_creates_missing_cli_skills_dirs_and_migrates_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            store = tmp_path / "store"
+            # ~/.claude exists without skills/; ~/.codex/skills holds legacy symlinks to ~/.agents/skills.
+            (home / ".claude").mkdir(parents=True)
+            (home / ".codex/skills").mkdir(parents=True)
+            for name in ("memoir", "memoir-wiki"):
+                legacy_dir = home / ".agents/skills" / name
+                legacy_dir.mkdir(parents=True)
+                (legacy_dir / "stale.txt").write_text("stale\n", encoding="utf-8")
+                (home / ".codex/skills" / name).symlink_to(legacy_dir)
+
+            env = {**os.environ, "HOME": str(home), "MEMOIR_STORE": ""}
+            subprocess.run(
+                [str(SCRIPT), "--skills-only", "--store", str(store)],
+                env=env,
+                check=True,
+            )
+
+            for name in ("memoir", "memoir-wiki"):
+                claude_copy = home / ".claude/skills" / name
+                self.assertTrue(claude_copy.is_dir())
+                self.assertFalse(claude_copy.is_symlink())
+                codex_copy = home / ".codex/skills" / name
+                self.assertTrue(codex_copy.is_dir())
+                self.assertFalse(codex_copy.is_symlink())
+                self.assertFalse((home / ".agents/skills" / name / "stale.txt").exists())
+
+            manifest = json.loads((store / "manifest.json").read_text(encoding="utf-8"))
+            by_path = {item["path"]: item for item in manifest["artifacts"]}
+            claude_memoir = by_path[(home / ".claude/skills/memoir").resolve().as_posix()]
+            self.assertEqual(
+                claude_memoir["created_parents"],
+                [(home / ".claude/skills").resolve().as_posix()],
+            )
+
+            # A foreign symlink outside ~/.agents/skills must be rejected without modifying target.
+            external_dir = tmp_path / "external-skill"
+            external_dir.mkdir()
+            (external_dir / "keep.txt").write_text("keep\n", encoding="utf-8")
+            (home / ".pi/agent/skills").mkdir(parents=True)
+            (home / ".pi/agent/skills/memoir").symlink_to(external_dir)
+            res = subprocess.run(
+                [str(SCRIPT), "--skills-only", "--store", str(store)],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("Existing symlink", res.stderr)
+            self.assertEqual((external_dir / "keep.txt").read_text(encoding="utf-8"), "keep\n")
+
+    def test_manifest_merges_across_partial_and_repeat_installs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            store = tmp_path / "store"
+            (home / ".claude").mkdir(parents=True)
+
+            release_dir = tmp_path / "release"
+            build_mock_release(release_dir, ui_bytes=b"verified-binary")
+            bin_dir = tmp_path / "bin"
+            bin_dir.mkdir()
+            write_mock_curl(
+                bin_dir,
+                release_dir,
+                "https://github.com/BaankeyBihari/memoir-skill/releases/latest/download/",
+            )
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "MEMOIR_STORE": "",
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            # First skills-only install creates ~/.claude/skills and ~/.claude/settings.json.
+            subprocess.run([str(SCRIPT), "--skills-only", "--store", str(store)], env=env, check=True)
+            # Repeat skills-only install must preserve created_parents and created_file=True.
+            subprocess.run([str(SCRIPT), "--skills-only", "--store", str(store)], env=env, check=True)
+            # Follow-up ui-only install must merge binary into existing manifest.
+            subprocess.run([str(SCRIPT), "--ui-only", "--store", str(store)], env=env, check=True)
+
+            manifest = json.loads((store / "manifest.json").read_text(encoding="utf-8"))
+            by_path = {item["path"]: item for item in manifest["artifacts"]}
+            claude_memoir = by_path[(home / ".claude/skills/memoir").resolve().as_posix()]
+            self.assertEqual(
+                claude_memoir["created_parents"],
+                [(home / ".claude/skills").resolve().as_posix()],
+            )
+            ui_bin = by_path[(home / ".local/bin/memoir-ui").resolve().as_posix()]
+            self.assertEqual(ui_bin["component"], "ui")
+            self.assertEqual(
+                set(ui_bin["created_parents"]),
+                {
+                    (home / ".local/bin").resolve().as_posix(),
+                    (home / ".local").resolve().as_posix(),
+                },
+            )
+            self.assertEqual(len(manifest["config_edits"]), 1)
+            self.assertTrue(manifest["config_edits"][0]["created_file"])
+
+    def test_uninstall_full_rollback_dry_run_and_idempotency(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            store = tmp_path / "store"
+            (home / ".claude").mkdir(parents=True)
+            (home / ".codex").mkdir(parents=True)
+            (home / ".gemini/antigravity").mkdir(parents=True)
+            (home / ".gemini/antigravity-cli").mkdir(parents=True)
+            (home / ".pi/agent").mkdir(parents=True)
+            (home / ".pi/agent/sandbox.json").write_text("{}\n", encoding="utf-8")
+
+            release_dir = tmp_path / "release"
+            build_mock_release(release_dir, ui_bytes=b"verified-binary")
+            bin_dir = tmp_path / "bin"
+            bin_dir.mkdir()
+            write_mock_curl(
+                bin_dir,
+                release_dir,
+                "https://github.com/BaankeyBihari/memoir-skill/releases/latest/download/",
+            )
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "MEMOIR_STORE": "",
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            subprocess.run([str(SCRIPT), "--store", str(store)], env=env, check=True)
+            user_note = store / "standalone/demo--12345678/active/decision-keep.md"
+            user_note.parent.mkdir(parents=True)
+            user_note.write_text("# Keep\nDecision: preserve memory\n", encoding="utf-8")
+
+            dry = subprocess.run(
+                [str(UNINSTALL_SCRIPT), "--store", str(store), "--dry-run"],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("Dry run complete", dry.stdout)
+            self.assertTrue((home / ".claude/skills/memoir/SKILL.md").is_file())
+            self.assertTrue((home / ".local/bin/memoir-ui").is_file())
+            self.assertTrue((store / "manifest.json").is_file())
+
+            res = subprocess.run(
+                [str(UNINSTALL_SCRIPT), "--store", str(store)],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("Memoir store data preserved", res.stdout)
+            self.assertFalse((home / ".agents").exists())
+            self.assertFalse((home / ".claude/skills").exists())
+            self.assertFalse((home / ".codex/skills").exists())
+            self.assertFalse((home / ".gemini/antigravity/skills").exists())
+            self.assertFalse((home / ".pi/agent/skills").exists())
+            self.assertFalse((home / ".local").exists())
+            self.assertFalse((home / ".claude/settings.json").exists())
+            self.assertFalse((home / ".codex/config.toml").exists())
+            self.assertFalse((home / ".gemini/antigravity-cli/settings.json").exists())
+            self.assertEqual(json.loads((home / ".pi/agent/sandbox.json").read_text(encoding="utf-8")), {})
+            self.assertTrue((home / ".claude").is_dir())
+            self.assertTrue((home / ".codex").is_dir())
+            self.assertFalse((store / "manifest.json").exists())
+            self.assertEqual(user_note.read_text(encoding="utf-8"), "# Keep\nDecision: preserve memory\n")
+
+            again = subprocess.run(
+                [str(UNINSTALL_SCRIPT), "--store", str(store)],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("Nothing to uninstall", again.stdout)
+
+    def test_uninstall_preserves_existing_cli_configs_and_unrelated_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            store = (tmp_path / "external-store").resolve()
+            (home / ".claude/skills/other-skill").mkdir(parents=True)
+            (home / ".claude/skills/other-skill/SKILL.md").write_text("# Other\n", encoding="utf-8")
+            (home / ".codex").mkdir(parents=True)
+            (home / ".gemini/antigravity-cli").mkdir(parents=True)
+            (home / ".pi/agent").mkdir(parents=True)
+            (home / ".local/bin").mkdir(parents=True)
+            (home / ".local/bin/other-tool").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            claude_init = {
+                "permissions": {"additionalDirectories": ["../shared"], "allow": ["Bash(npm test)"]},
+                "sandbox": {"enabled": True, "filesystem": {"allowWrite": ["/tmp/build"]}},
+                "customKey": 42,
+            }
+            (home / ".claude/settings.json").write_text(json.dumps(claude_init, indent=2) + "\n", encoding="utf-8")
+
+            codex_init = (
+                "# Keep top comment\n"
+                'model = "gpt-5"\n\n'
+                "[sandbox_workspace_write]\n"
+                "# Preserve table comment\n"
+                "network_access = false\n"
+                "writable_roots = [\n"
+                '    "/existing/root",\n'
+                "]\n\n"
+                "[other_section]\n"
+                "flag = true\n"
+            )
+            (home / ".codex/config.toml").write_text(codex_init, encoding="utf-8")
+
+            agy_path = home / ".gemini/antigravity-cli/settings.json"
+            agy_init = {"agentMode": "accept-edits", "permissions": {"allow": ["command(git status)"]}}
+            agy_path.write_text(json.dumps(agy_init, indent=2) + "\n", encoding="utf-8")
+            agy_path.chmod(0o600)
+
+            pi_init = {"allowWrite": ["./src"], "denyWrite": ["./.git"]}
+            (home / ".pi/agent/sandbox.json").write_text(json.dumps(pi_init, indent=2) + "\n", encoding="utf-8")
+
+            release_dir = tmp_path / "release"
+            build_mock_release(release_dir, ui_bytes=b"verified-binary")
+            bin_dir = tmp_path / "bin"
+            bin_dir.mkdir()
+            write_mock_curl(
+                bin_dir,
+                release_dir,
+                "https://github.com/BaankeyBihari/memoir-skill/releases/latest/download/",
+            )
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "MEMOIR_STORE": "",
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            subprocess.run([str(SCRIPT), "--store", str(store)], env=env, check=True)
+            subprocess.run([str(UNINSTALL_SCRIPT), "--store", str(store)], env=env, check=True)
+
+            self.assertEqual(json.loads((home / ".claude/settings.json").read_text(encoding="utf-8")), claude_init)
+            self.assertEqual((home / ".codex/config.toml").read_text(encoding="utf-8"), codex_init)
+            self.assertEqual(json.loads(agy_path.read_text(encoding="utf-8")), agy_init)
+            self.assertEqual(stat.S_IMODE(agy_path.stat().st_mode), 0o600)
+            self.assertEqual(json.loads((home / ".pi/agent/sandbox.json").read_text(encoding="utf-8")), pi_init)
+            self.assertEqual((home / ".claude/skills/other-skill/SKILL.md").read_text(encoding="utf-8"), "# Other\n")
+            self.assertTrue((home / ".local/bin/other-tool").is_file())
+            self.assertFalse((home / ".local/bin/memoir-ui").exists())
+
+    def test_uninstall_partial_ui_then_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            store = tmp_path / "store"
+            (home / ".claude").mkdir(parents=True)
+
+            release_dir = tmp_path / "release"
+            build_mock_release(release_dir, ui_bytes=b"verified-binary")
+            bin_dir = tmp_path / "bin"
+            bin_dir.mkdir()
+            write_mock_curl(
+                bin_dir,
+                release_dir,
+                "https://github.com/BaankeyBihari/memoir-skill/releases/latest/download/",
+            )
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "MEMOIR_STORE": "",
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            }
+
+            subprocess.run([str(SCRIPT), "--store", str(store)], env=env, check=True)
+            subprocess.run([str(UNINSTALL_SCRIPT), "--store", str(store), "--ui-only"], env=env, check=True)
+
+            self.assertFalse((home / ".local/bin/memoir-ui").exists())
+            self.assertTrue((home / ".claude/skills/memoir/SKILL.md").is_file())
+            self.assertTrue((home / ".claude/settings.json").is_file())
+            manifest = json.loads((store / "manifest.json").read_text(encoding="utf-8"))
+            self.assertTrue(all(item["component"] == "skills" for item in manifest["artifacts"]))
+            self.assertEqual(len(manifest["config_edits"]), 1)
+
+            subprocess.run([str(UNINSTALL_SCRIPT), "--store", str(store), "--skills-only"], env=env, check=True)
+            self.assertFalse((home / ".claude/skills").exists())
+            self.assertFalse((home / ".claude/settings.json").exists())
+            self.assertFalse((store / "manifest.json").exists())
 
 
 if __name__ == "__main__":
