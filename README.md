@@ -107,7 +107,7 @@ memoir-ui --port 7337 --store ~/.memoir --open
 | `memoir-ui help` | Show usage |
 
 - Set `$BROWSER` to choose which browser `--open` and `dashboard` launch.
-- Features: hierarchical Repos / Pinned Workspaces / Standalone navigation, live `fsnotify` SSE reload (`/events`), Goldmark Markdown with clickable `[[page]]` and `[[scope:page]]` links, inbound backlinks, visual decision supersession chains, `Cmd+K` full-text search with scope/type filters, 7 color themes, and confirmed pruning for orphaned clones/workspaces.
+- Features: resizable hierarchical Repos / Pinned Workspaces / Standalone sidebar (persisted width, concise file labels with full paths on hover), live `fsnotify` SSE reload (`/events`), Goldmark Markdown with clickable `[[page]]` and `[[scope:page]]` links, inbound backlinks, visual decision supersession chains, `Cmd+K` full-text search with scope/type filters, 7 color themes, and confirmed pruning for orphaned clones/workspaces.
 
 ## Always on
 
@@ -166,6 +166,8 @@ python3 test_memoir.py
 python3 scripts/test_install.py
 cd dashboard && go test -race ./...
 ```
+
+With [`mise`](mise.toml), run `mise run lint`, `mise run test`, and `mise run build` (and `mise run hooks` to install local pre-commit checks).
 
 ## License
 
