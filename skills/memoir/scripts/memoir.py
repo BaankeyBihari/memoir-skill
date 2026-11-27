@@ -297,12 +297,14 @@ def find_superseded(scopes: list[Path]) -> dict[Path, str]:
                         print(f"[Memoir] {path.name} supersedes {name}, held by {len(holders)} scopes; skipped.", file=sys.stderr)
     return dict(sorted(found.items()))
 
-def atomic_write(path: Path, contents: str) -> None:
+def atomic_write(path: Path, contents: str, *, mode: int | None = None) -> None:
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
         temporary = Path(tmp.name)
         try:
             tmp.write(contents)
             tmp.flush()
+            if mode is not None:
+                os.fchmod(tmp.fileno(), mode)
             os.fsync(tmp.fileno())
             os.replace(temporary, path)
         finally:
@@ -405,11 +407,128 @@ def print_scope(store: Path, base_dir: Path) -> None:
             print(scope)
 
 
+def instruction_lines(lines: list[str]):
+    """Yield prose lines so setup ignores block examples inside Markdown fences."""
+    fence = ""
+    for i, line in enumerate(lines):
+        value = line.rstrip("\r\n")
+        delimiter = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", value)
+        if delimiter:
+            marker, rest = delimiter.groups()
+            if not fence:
+                fence = marker
+            elif marker.startswith(fence) and not rest.strip():
+                fence = ""
+        elif not fence:
+            yield i, value
+    if fence:
+        raise ValueError("Unclosed Markdown fence in project instructions")
+
+
+def instruction_target(root: Path, target: str | None) -> Path:
+    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
+    if target is None or target == claude.name:
+        if claude.is_file() and claude.resolve().parent == root:
+            imports = claude.read_bytes().decode("utf-8-sig").splitlines()
+            if any(re.search(r"(?:^|\s)@(?:\./)?AGENTS\.md(?=\s|[.,;:]?(?:\s|$))",
+                             re.sub(r"`[^`]*`", "", line)) for _, line in instruction_lines(imports)):
+                return agents
+    if target:
+        return root / target
+    if agents.exists() and claude.exists() and agents.resolve() != claude.resolve():
+        raise ValueError(f"Both instruction files exist in {root}. Choose AGENTS.md or CLAUDE.md.")
+    return claude if claude.exists() and not agents.exists() else agents
+
+
+def guarded_instructions(text: str, skill: str, body: str) -> str:
+    lines = text.splitlines(keepends=True)
+    newline = "\r\n" if text.partition("\n")[0].endswith("\r") else "\n"
+    begin, end = f"<!-- {skill}:begin -->", f"<!-- {skill}:end -->"
+    heading = body.splitlines()[0]
+    legacy = []
+    spans = {}
+    opened = None
+    for i, value in instruction_lines(lines):
+        if value == heading and opened is None:
+            legacy.append(i)
+        if not re.match(r"^\s*<!--\s*memoir(?:-wiki)?:", value):
+            continue
+        match = re.fullmatch(r"<!-- (memoir(?:-wiki)?):(begin|end) -->", value)
+        if match:
+            owner, side = match.groups()
+            if side == "begin" and opened is None and owner not in spans:
+                opened = (owner, i)
+                continue
+            if side == "end" and opened and opened[0] == owner:
+                spans[owner] = (opened[1], i)
+                opened = None
+                continue
+        raise ValueError(f"Malformed or overlapping Memoir guards at line {i + 1}")
+    if opened:
+        raise ValueError("Unclosed Memoir guard in project instructions")
+
+    block = newline.join([begin, *body.splitlines(), end])
+    if legacy:
+        start = legacy[0]
+        expected = body.splitlines()
+        stop = start + len(expected)
+        following = next((line for line in lines[stop:] if line.strip()), "")
+        if (skill in spans or len(legacy) != 1 or (following and not following.startswith(("#", "<!--")))
+                or [line.rstrip("\r\n") for line in lines[start:stop]] != expected):
+            raise ValueError(f"Review the existing '{heading}' section before enabling {skill}")
+        spans[skill] = (start, stop - 1)
+    if skill in spans:
+        start, last = spans[skill]
+        ending = lines[last][len(lines[last].rstrip("\r\n")):]
+        return "".join(lines[:start]) + block + ending + "".join(lines[last + 1:])
+    if text and not text.endswith("\n"):
+        text += newline
+    if text and not text.endswith(newline * 2):
+        text += newline
+    return text + block + newline
+
+
+def project_init(skill: str, target: str | None) -> None:
+    import fcntl
+
+    top = git_output("rev-parse", "--show-toplevel")
+    root = Path(top).resolve() if top else Path.cwd()
+    if not top and (group := group_of(store_root(), root)):
+        root = group[0]
+    reference = Path(__file__).resolve().parents[2] / skill / "references" / "always-on.md"
+    template = re.search(r"^```markdown\n(.+?)\n```$", reference.read_text(encoding="utf-8"), re.M | re.S)
+    if not template:
+        raise ValueError(f"Missing instruction block in {reference}")
+    # Lock the directory so simultaneous inits can atomically replace the same file in either order.
+    directory = os.open(root, os.O_RDONLY)
+    try:
+        fcntl.flock(directory, fcntl.LOCK_EX)
+        path = instruction_target(root, target)
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"Expected a regular project instruction file at {path}")
+        existing = path.exists()
+        raw = path.read_bytes() if existing else b""
+        text = raw.decode("utf-8-sig")
+        updated = guarded_instructions(text, skill, template[1])
+        if updated == text:
+            print(f"Already current: {path}")
+            return
+        if raw.startswith(b"\xef\xbb\xbf"):
+            updated = "\ufeff" + updated
+        atomic_write(path, updated, mode=stat.S_IMODE(path.stat().st_mode) if existing else None)
+        print(f"Installed {skill} project instructions in {path}")
+    finally:
+        os.close(directory)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Memoir Management CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="Initialize the memoir directories")
+    setup = subparsers.add_parser("project-init", help="Install one skill's project instructions")
+    setup.add_argument("skill", choices=("memoir", "memoir-wiki"))
+    setup.add_argument("target", nargs="?", choices=("AGENTS.md", "CLAUDE.md"))
     
     archive_parser = subparsers.add_parser("archive", help="Move specified files to the archive")
     archive_parser.add_argument("files", nargs="*", help="List of filenames in active/ to archive")
@@ -438,6 +557,9 @@ def main():
     mode.add_argument("--prune", action="store_true", help="Remove each orphaned scope directory")
 
     args = parser.parse_args()
+    if args.command == "project-init":
+        project_init(args.skill, args.target)
+        return
     if (store_root() / "active").is_dir():
         raise ValueError(f"{store_root()} is a v1 store (has active/); unset or repoint MEMOIR_STORE to a v2 store root.")
     if args.command == "gc":

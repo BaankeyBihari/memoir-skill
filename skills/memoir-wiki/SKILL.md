@@ -2,11 +2,21 @@
 name: memoir-wiki
 license: MIT
 allowed-tools: Read Glob Grep Write(~/.memoir/**/wiki/**) Edit(~/.memoir/**/wiki/**)
-description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query|lint, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, to audit the wiki for broken links, orphan pages, contradictions or stale file references, or to mirror it into the repository (sync_to_repo). Not for recording a new decision or session state, which is the memoir skill's job.
+description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki init|ingest|query|lint, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, to audit the wiki for broken links, orphan pages, contradictions or stale file references, or to mirror it into the repository (sync_to_repo). Not for recording a new decision or session state, which is the memoir skill's job.
 ---
 
 # Role
 You are the Memoir Wiki compiler. You turn the point-in-time fragments that the memoir skill writes into a living wiki. Each page synthesizes one topic, links to related pages with `[[wikilinks]]`, and records where its facts came from. You read fragments and never write them.
+
+## `/memoir-wiki init [AGENTS.md|CLAUDE.md]`
+From the user's project directory, run `python3 <this-skill-dir>/../memoir/scripts/memoir.py project-init memoir-wiki`, appending the filename if the user selected one. If the helper reports two independent instruction files, ask which to update and rerun with that filename. Relay the result and stop. This installs the project knowledge-search rule from `references/always-on.md` independently of capture. Setup works before the wiki exists.
+
+## Automatic project knowledge lookup
+For an automatic lookup, run `memoir.py scope` as described below. If there is no scope or its `wiki/index.md` is missing, continue the original search immediately. Leave wiki creation, ingestion, and pinning to an explicit request.
+
+With an index present, give an Explore subagent the question, current project directory, and the instruction to use the `memoir-wiki` skill's **automatic read-only query**. If delegation is unavailable, disabled, or the subagent cannot load the skill, do that lookup directly. An agent receiving the lookup performs it directly.
+
+Follow query steps 1–3 and return findings, `[[page-path]]` citations, and any gaps. Stop before filing a synthesis or writing to the wiki, index, or log. Use the findings in the original task, check claims about current behavior against the checkout, and continue with other evidence where the wiki is incomplete or stale.
 
 ## Wiki Root
 Resolve the wiki from the CLI's output, never from a guessed or relative path (NFR-3.1). A wiki written anywhere else is invisible to every other session and to `memoir-ui`.
@@ -99,7 +109,7 @@ Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: th
     It copies every `wiki/**/*.md` to `<MAIN_ROOT>/<sync_target>` (default `docs/wiki`), where `MAIN_ROOT` is the main checkout above `git rev-parse --git-common-dir`, so a worktree mirrors into the main checkout as well. `.ingest-state.json` is not Markdown and never leaves the store. It refuses an absolute `sync_target` or one containing `..`, because this is the only step allowed to write into a working tree, and only inside it. It overwrites matching files and deletes nothing: a `not in wiki:` line is a file the user may want to remove. Cross-wiki `[[<scope>:<page>]]` links are copied verbatim and resolve only in the store. Add a `synced <n> pages to <dest>` bullet to this ingest's log entry, and pass any `not in wiki:` lines on to the user. `sync off` means the mirror is disabled, so do nothing.
 
 ### `/memoir-wiki query [question]`
-Answer from the wiki, and keep any synthesis worth reusing (FR-4.3).
+For an explicit query, answer from the wiki and keep any synthesis worth reusing (FR-4.3). Automatic lookups end after step 3 (FR-4.6).
 
 1. Read `wiki/index.md` first. It's the map, and reading it first stops you from grepping the store or opening fragments. If the wiki or its index doesn't exist, say so and suggest `/memoir-wiki ingest`.
 2. Pick the 2 to 4 pages whose summaries best match the question. Read them, then follow their `[[wikilinks]]` only while the next page still adds something. A cross-wiki link `[[<scope>:<page-path>]]` may be followed read-only, resolved as in `references/schema.md`.
