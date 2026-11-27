@@ -55,6 +55,81 @@ block = always_on[always_on.index("```markdown"):always_on.rindex("```") + 3]
 assert block in (Path(__file__).parent / "README.md").read_text(), "README always-on block drifted"
 assert "uv run" not in (SCRIPT.parents[1] / "SKILL.md").read_text(), "SKILL.md must invoke the CLI with python3"
 
+# Project initialization runs beside the store and manages each skill's block independently.
+with tempfile.TemporaryDirectory() as raw:
+    root = Path(raw).resolve()
+    project = root / "project"
+    child = project / "subdir"
+    child.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", project], check=True)
+    store = root / "store"
+    env = {**os.environ, "MEMOIR_STORE": str(store)}
+
+    def setup(*args, check=True):
+        return subprocess.run([sys.executable, SCRIPT, "project-init", *args], cwd=child, env=env,
+                              check=check, capture_output=True, text=True)
+
+    agents, claude = project / "AGENTS.md", project / "CLAUDE.md"
+    for first, second in (("memoir", "memoir-wiki"), ("memoir-wiki", "memoir")):
+        setup(first)
+        first_block = agents.read_bytes()
+        assert f"<!-- {first}:begin -->".encode() in first_block
+        assert f"<!-- {second}:begin -->".encode() not in first_block
+        setup(second)
+        both = agents.read_bytes()
+        assert both.startswith(first_block) and both.count(b":begin -->") == 2
+        mtime = agents.stat().st_mtime_ns
+        setup(first)
+        setup(second)
+        assert agents.read_bytes() == both and agents.stat().st_mtime_ns == mtime
+        agents.unlink()
+    assert not store.exists() and not (child / "AGENTS.md").exists()
+
+    # Adopt the manual CRLF block in place, preserving the user's BOM, text, and file mode.
+    legacy = block.removeprefix("```markdown\n").removesuffix("\n```").replace("\n", "\r\n").encode()
+    prefix, suffix = b"\xef\xbb\xbf# Team rules\r\n\r\n", b"\r\n\r\n## More rules\r\nKeep me."
+    agents.write_bytes(prefix + legacy + suffix)
+    agents.chmod(0o640)
+    claude.write_text("# Project\nSee @./AGENTS.md for shared instructions.\n")
+    setup("memoir")
+    guarded = b"<!-- memoir:begin -->\r\n" + legacy + b"\r\n<!-- memoir:end -->"
+    assert agents.read_bytes() == prefix + guarded + suffix
+    assert agents.stat().st_mode & 0o777 == 0o640
+    setup("memoir-wiki")
+    complete = agents.read_bytes()
+    agents.write_bytes(complete.replace(legacy, b"Old managed text"))
+    setup("memoir")
+    assert agents.read_bytes() == complete
+    assert ":begin -->" not in claude.read_text()
+
+    for bad in (b"<!-- memoir:begin -->", b"<!-- memoir:end -->",
+                b"<!-- memoir:begin -->\n<!-- memoir-wiki:begin -->\n<!-- memoir:end -->",
+                guarded + b"\n" + guarded, legacy + b"\r\n- A custom capture rule"):
+        agents.write_bytes(bad)
+        assert setup("memoir", check=False).returncode != 0 and agents.read_bytes() == bad
+
+    claude.write_text("```text\n@AGENTS.md\n```\n")
+    before = claude.read_bytes()
+    assert "Choose AGENTS.md or CLAUDE.md" in setup("memoir-wiki", check=False).stderr
+    assert claude.read_bytes() == before
+    setup("memoir-wiki", "CLAUDE.md")
+    assert claude.read_bytes().startswith(before) and agents.read_bytes() == bad
+    agents.unlink()
+    setup("memoir")  # CLAUDE.md alone
+    assert not agents.exists() and claude.read_bytes().count(b":begin -->") == 2
+    outside = root / "outside"
+    outside.write_text("leave alone")
+    agents.symlink_to(outside)
+    assert setup("memoir", "AGENTS.md", check=False).returncode != 0
+    assert outside.read_text() == "leave alone" and agents.is_symlink()
+
+    pinned = root / "pinned"
+    child = pinned / "nested"
+    child.mkdir(parents=True)
+    subprocess.run([sys.executable, SCRIPT, "pin", pinned], cwd=child, env=env, check=True, capture_output=True)
+    setup("memoir-wiki")
+    assert (pinned / "AGENTS.md").is_file() and not (child / "AGENTS.md").exists()
+
 # --- B5: the Superseded-By back-link is written into the ARCHIVED copy, right after Supersedes: ---
 with tempfile.TemporaryDirectory() as tmp:
     store = Path(tmp) / "store"

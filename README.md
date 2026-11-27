@@ -60,6 +60,7 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 
 | Command | Effect |
 |---|---|
+| `/memoir init [AGENTS.md\|CLAUDE.md]` | Enables project-local capture and reload guidance |
 | `/memoir decision [text]` | Writes `decision-{slug}.md`, recording any decision it supersedes |
 | `/memoir log [text]` | Writes `log-{slug}.md` |
 | `/memoir reference [text]` | Writes `reference-{slug}.md` |
@@ -86,6 +87,7 @@ When `[text]` is empty, the content is extracted from the recent conversation.
 
 | Command | Effect |
 |---|---|
+| `/memoir-wiki init [AGENTS.md\|CLAUDE.md]` | Enables independent, read-only wiki lookup for project knowledge searches |
 | `/memoir-wiki ingest` | Incrementally synthesizes new/changed fragments across clones, worktrees and pinned group members into the scope's shared `wiki/` (and mirrors to the repo when `meta.json` sets `"sync_to_repo": true`) |
 | `/memoir-wiki query [question]` | Reads `wiki/index.md` first, traverses `[[wikilinks]]`, answers with citations, and files reusable syntheses under `wiki/architecture/` |
 | `/memoir-wiki lint` | Audits `wiki/` for broken local or cross-wiki `[[wikilinks]]`, unindexed pages, orphans, contradictions, and stale file/command references |
@@ -112,7 +114,11 @@ memoir-ui --port 7337 --store ~/.memoir --open
 
 ## Always on
 
-To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (all projects), a repository's `CLAUDE.md` (one project), or `AGENTS.md` (Codex and other agents). The same block lives in [skills/memoir/references/always-on.md](skills/memoir/references/always-on.md).
+Run `/memoir init` for memory capture, `/memoir-wiki init` for wiki lookup, or both in either order. Each command maintains its own guarded block at the Git worktree root, pinned workspace root, or current directory. Setup uses the existing project instruction file and creates `AGENTS.md` by default. When `CLAUDE.md` imports `AGENTS.md`, the shared file receives the block. When both files are independent, choose a filename. Repeating setup updates only that skill's block.
+
+With wiki lookup enabled, project knowledge searches consult the current wiki index when it exists. An Explore subagent uses the `memoir-wiki` skill when available, with direct lookup as a fallback. Automatic searches return cited findings without writing. Explicit `/memoir-wiki query` can still file a reusable synthesis.
+
+For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all projects), a repository's `CLAUDE.md` (one project), or `AGENTS.md` (Codex and other agents). The same block lives in [skills/memoir/references/always-on.md](skills/memoir/references/always-on.md).
 
 ```markdown
 ## Memory: memoir
@@ -132,6 +138,7 @@ To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (
 | `gc [--dry-run] [--prune]` | Reports scopes with missing source directories. Use `--prune` to delete each reported clone or pinned workspace, including its stored contents. |
 | `pin [path]` / `unpin [path]` | Register or remove a non-Git workspace root (default current directory). The longest matching ancestor wins. Pinning moves no files. |
 | `init` | Creates `active/` and `archive/` |
+| `project-init <memoir\|memoir-wiki> [AGENTS.md\|CLAUDE.md]` | Installs one skill's project instruction block |
 | `prompt` | Prints the absolute `active/` path for LLM injection |
 | `path` | Prints the resolved store directory |
 | `scope` | Prints the wiki scope root (repository or pinned group), then each fragment directory it covers |

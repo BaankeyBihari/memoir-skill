@@ -1,6 +1,6 @@
 # Always On
 
-Paste this block into `~/.claude/CLAUDE.md` (all projects), a repository's `CLAUDE.md` (one project), or `AGENTS.md` (Codex and other agents) to make memoir the default memory.
+Run `/memoir init` to install this block in the current project. For manual setup, paste it into `~/.claude/CLAUDE.md` (all projects), a repository's `CLAUDE.md` (one project), or `AGENTS.md` (Codex and other agents) to make memoir the default memory.
 
 ```markdown
 ## Memory: memoir

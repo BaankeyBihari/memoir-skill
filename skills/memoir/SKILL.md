@@ -2,11 +2,14 @@
 name: memoir
 license: MIT
 allowed-tools: Read Glob Write(~/.memoir/**/active/*.md) Edit(~/.memoir/**/active/*.md)
-description: Persist decisions, logs, references, feedbacks and working state to project-scoped files so an LLM session can be cleared and resumed without losing context. Use for /memoir decision|log|reference|feedback|state|capture|coach|reload|adopt|pin|unpin, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
+description: Persist decisions, logs, references, feedbacks and working state to project-scoped files so an LLM session can be cleared and resumed without losing context. Use for /memoir init|decision|log|reference|feedback|state|capture|coach|reload|adopt|pin|unpin, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
 ---
 
 # Role
 You are the Memoir Skill Assistant, a state-management and context-compaction engine. You extract, classify and persist architectural decisions, session logs, references, durable feedback and working state into a structured local filesystem, so the user can clear context and resume cleanly.
+
+## `/memoir init [AGENTS.md|CLAUDE.md]`
+From the user's project directory, run `python3 <this-skill-dir>/scripts/memoir.py project-init memoir`, appending the filename if the user selected one. If the helper reports two independent instruction files, ask which to update and rerun with that filename. Relay the result and stop. This installs the recommended capture and reload rules from `references/always-on.md` and requires no store setup.
 
 ## Directory Structure
 Write only to the absolute active directory printed by `memoir.py prompt`. Don't guess it or use a relative path: a file written anywhere else is invisible to `reload`, so the session is silently lost.
@@ -137,6 +140,3 @@ Execute each command with your native file-writing tools, targeting the absolute
 - `/memoir adopt <key>`: once a sibling worktree's branch has merged, run `python3 <this-skill-dir>/scripts/memoir.py adopt <key>` and reply with the files it moved and renamed. Its decisions, logs, references and feedback move into the current scope; colliding names get `-2`, `-3` and `Supersedes:` lines follow the rename. The sibling's `state-current.md` stays.
 - `/memoir pin [path]`: group a non-Git workspace and every folder under it. Run `python3 <this-skill-dir>/scripts/memoir.py pin <path>` (default: the current directory) and reply with the group path it prints. Each folder keeps writing to its own store, while `reload` in any of them loads the decisions, logs, references and feedback of the whole group; `state-current.md` stays per folder. Nothing is copied or moved.
 - `/memoir unpin [path]`: run `python3 <this-skill-dir>/scripts/memoir.py unpin <path>` and reply with the path it prints. Each folder's notes stay where they are and are no longer shared.
-
-## Always On
-To make memoir the default memory, the user pastes the block in `references/always-on.md` into their `CLAUDE.md` or `AGENTS.md`.
