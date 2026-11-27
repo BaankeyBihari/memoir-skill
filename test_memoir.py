@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT = Path(__file__).parent / "skills" / "memoir" / "scripts" / "memoir.py"
@@ -230,5 +230,87 @@ with tempfile.TemporaryDirectory() as raw:
     out = run(legacy, "resume")
     assert out.returncode == 1 and "is a v1 store" in out.stderr, out
     assert not (legacy / "repos").exists() and not (legacy / "standalone").exists()
+
+# --- FR-2.4/FR-2.9: sibling worktrees are listed, loaded on demand, and adopted ---
+with tempfile.TemporaryDirectory() as raw:
+    tmp = Path(raw).resolve()
+    env = {**os.environ, "HOME": str(tmp), "MEMOIR_STORE": "", "XDG_CONFIG_HOME": str(tmp / "xdg")}
+
+    def cli(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, SCRIPT, *args], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True, capture_output=True)
+
+    main, feat, gone = tmp / "repo", tmp / "repo" / "wt" / "feat", tmp / "gone"
+    git("init", "-q", str(main))
+    git("-C", str(main), "commit", "-q", "--allow-empty", "-m", "init")
+    git("-C", str(main), "worktree", "add", "-q", str(feat))
+    git("-C", str(main), "worktree", "add", "-q", str(gone))
+    base = {wt: Path(cli(wt, "path").stdout.strip()) for wt in (main, feat, gone)}
+    assert base[feat].name == "wt__feat" and base[gone].name == "gone", base
+    for wt in base:
+        assert cli(wt, "init").returncode == 0
+    assert '"root": "%s"' % feat in (base[feat] / "worktree.json").read_text()
+
+    a = {wt: base[wt] / "active" for wt in base}
+    (a[main] / "state-current.md").write_text("# main\n")
+    (a[main] / "decision-a.md").write_text("Supersedes: none\nmain\n")
+    (a[feat] / "state-current.md").write_text("# feat\n")
+    (a[feat] / "decision-a.md").write_text("Supersedes: none\nfeat\n")
+    (a[feat] / "decision-b.md").write_text("Date: 2026-11-01\nSupersedes: decision-a.md\n")
+    (a[feat] / "log-x.md").write_text("x\n")
+    (a[feat] / "feedback-y.md").write_text("y\n")
+    os.utime(a[feat] / "log-x.md", (1767225600, 1767225600))  # newest: 2026-01-01 local
+    for p in (a[feat] / "decision-a.md", a[feat] / "decision-b.md", a[feat] / "feedback-y.md"):
+        os.utime(p, (1735689600, 1735689600))
+    (a[gone] / "reference-r.md").write_text("Target: x\n")
+    git("-C", str(main), "worktree", "remove", str(gone))
+    empty = base[main].parent / "empty"
+    (empty / "active").mkdir(parents=True)
+    (empty / "active" / "state-current.md").write_text("# state only\n")
+    legacy = base[main].parent / "legacy"
+    (legacy / "active").mkdir(parents=True)
+    (legacy / "active" / "log-old.md").write_text("old\n")
+
+    out = cli(main, "resume").stdout
+    head = "Sibling worktrees with fragments (not loaded; add with resume --with <key>):"
+    newest = datetime.fromtimestamp(1767225600, timezone.utc).astimezone().strftime("%Y-%m-%d")
+    assert out.split(head)[1].strip().splitlines() == [
+        "- gone: 0 decisions, 0 logs, 1 references, 0 feedback; newest %s; worktree missing" % datetime.fromtimestamp((a[gone] / "reference-r.md").stat().st_mtime, timezone.utc).astimezone().strftime("%Y-%m-%d"),
+        "- legacy: 0 decisions, 1 logs, 0 references, 0 feedback; newest %s; worktree unknown" % datetime.fromtimestamp((legacy / "active" / "log-old.md").stat().st_mtime, timezone.utc).astimezone().strftime("%Y-%m-%d"),
+        f"- wt__feat: 2 decisions, 1 logs, 0 references, 1 feedback; newest {newest}; worktree present",
+    ], out  # current scope and state-only "empty" excluded
+    assert str(a[feat]) not in out.split(head)[0]  # listed, not loaded
+    assert "- _main:" in cli(feat, "resume").stdout
+
+    out = cli(main, "resume", "--with", "wt__feat", "--with", "wt__feat").stdout
+    files = [line.split(". ", 1)[1] for line in out.splitlines() if line[:1].isdigit()]
+    assert files == [str(a[main] / n) for n in ("state-current.md", "decision-a.md")] + [
+        str(a[feat] / n) for n in ("decision-a.md", "decision-b.md", "feedback-y.md", "log-x.md")], files
+    for bad in ("_main", "nope", "..", "wt__feat/active", ""):
+        out = cli(main, "resume", "--with", bad)
+        assert out.returncode == 1 and f"No sibling path {bad} in " in out.stderr, (bad, out)
+    assert cli(tmp, "adopt", "x").returncode == 1  # outside Git
+
+    out = cli(main, "adopt", "wt__feat")
+    assert out.returncode == 0, out
+    assert out.stdout.splitlines() == [
+        "[Memoir] Adopted 4 files from wt__feat.",
+        f"{a[main] / 'decision-a-2.md'} (renamed from decision-a.md)",
+        f"{a[main] / 'decision-b.md'}",
+        f"{a[main] / 'feedback-y.md'}",
+        f"{a[main] / 'log-x.md'}",
+    ], out.stdout
+    assert (a[main] / "decision-a.md").read_text() == "Supersedes: none\nmain\n"
+    assert (a[main] / "decision-a-2.md").read_text() == "Supersedes: none\nfeat\n"
+    assert (a[main] / "decision-b.md").read_text() == "Date: 2026-11-01\nSupersedes: decision-a-2.md\n"
+    assert sorted(p.name for p in a[feat].iterdir()) == ["state-current.md"]
+    assert (a[main] / "state-current.md").read_text() == "# main\n"
+    assert "Adopted 0 files from wt__feat." in cli(main, "adopt", "wt__feat").stdout
+
+    out = cli(main, "archive", "--superseded")
+    assert out.returncode == 0 and "Archived 1 files" in out.stdout, out
+    assert (a[main] / "decision-a.md").exists() and not (a[main] / "decision-a-2.md").exists()
 
 print("ok")

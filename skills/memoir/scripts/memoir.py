@@ -152,7 +152,69 @@ def resolve_store(store: Path, record: bool) -> Path:
         key = "__".join(toplevel.relative_to(root).parts)
     else:
         key = toplevel.name
+    if record:
+        record_scope(clone / "paths" / key / "worktree.json", toplevel)
     return clone / "paths" / key
+
+
+def fragments(scope: Path) -> list[Path]:
+    """Active decision, log, reference and feedback fragments: never state-current.md."""
+    return sorted(p for p in (scope / "active").glob("*.md") if ARCHIVABLE_RE.match(p.name))
+
+
+def sibling(store: Path, base_dir: Path, key: str) -> Path:
+    """Another paths/<key>/ of the same Git clone (FR-2.4, FR-2.9)."""
+    path = base_dir.parent / key
+    if (not base_dir.is_relative_to(store / "repos") or key in {"", ".", ".."} or Path(key).name != key
+            or path == base_dir or not path.is_dir()):
+        raise ValueError(f"No sibling path {key} in {base_dir.parent.parent}")
+    return path
+
+
+def print_siblings(store: Path, base_dir: Path) -> None:
+    if not base_dir.is_relative_to(store / "repos"):
+        return
+    lines = []
+    for path in sorted(p for p in base_dir.parent.iterdir() if p.is_dir() and p != base_dir):
+        found = fragments(path)
+        if not found:
+            continue
+        count = {kind: sum(p.name.startswith(f"{kind}-") for p in found) for kind in ("decision", "log", "reference", "feedback")}
+        newest = datetime.fromtimestamp(max(p.stat().st_mtime for p in found), timezone.utc).astimezone().strftime("%Y-%m-%d")
+        try:
+            status = "present" if Path(json.loads((path / "worktree.json").read_text(encoding="utf-8"))["root"]).is_dir() else "missing"
+        except (OSError, ValueError, KeyError, TypeError):
+            status = "unknown"
+        lines.append(f"- {path.name}: {count['decision']} decisions, {count['log']} logs, {count['reference']} references, "
+                     f"{count['feedback']} feedback; newest {newest}; worktree {status}")
+    if lines:
+        print("\nSibling worktrees with fragments (not loaded; add with resume --with <key>):")
+        print("\n".join(lines))
+
+
+def adopt(base_dir: Path, source: Path) -> None:
+    """Move a sibling's fragments into base_dir, suffixing collisions and rewriting links to renamed files (FR-2.9)."""
+    moving = fragments(source)
+    taken = {p.name for p in (base_dir / "active").iterdir()}
+    names = {}
+    for path in moving:
+        name, n = path.name, 2
+        while name in taken:
+            name, n = f"{path.stem}-{n}.md", n + 1
+        taken.add(name)
+        names[path.name] = name
+    renamed = {old: new for old, new in names.items() if old != new}
+    print(f"[Memoir] Adopted {len(moving)} files from {source.name}.")
+    for path in moving:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            if line.startswith(("Supersedes:", "Superseded-By:")):
+                lines[i] = SUPERSEDED_RE.sub(lambda m: renamed.get(m.group(), m.group()), line)
+        dest = base_dir / "active" / names[path.name]
+        # Write before unlinking: a crash leaves a duplicate, never a lost fragment.
+        atomic_write(dest, "".join(lines))
+        path.unlink()
+        print(f"{dest.absolute()}{f' (renamed from {path.name})' if path.name in renamed else ''}")
 
 
 def check_access(base_dir: Path) -> None:
@@ -288,21 +350,22 @@ def archive_files(targets: list[tuple[str, Path]]):
     if failed:
         sys.exit(1)
 
-def generate_resume(base_dir: Path, scopes: list[Path]):
+def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path]):
     state_file = base_dir / "active" / "state-current.md"
     files = [state_file] if state_file.exists() else []
-    # Other group members' state belongs to their own folders (FR-2.4).
+    # Other group members' and siblings' state belongs to their own folders (FR-2.4).
     files += sorted(p for s in scopes for p in (s / "active").glob("*.md") if p.name != "state-current.md")
+    files += [p for s in dict.fromkeys(extra) for p in fragments(s)]
 
     generate_prompt(base_dir)
     if not files:
         print("\nNo recorded session found. Start fresh.")
-        return
-
-    print("\nLoad the following files to restore my session state:")
-    for idx, filepath in enumerate(files, 1):
-        print(f"{idx}. {filepath.absolute()}")
-    print("\nBased on the state file, resume the current task.")
+    else:
+        print("\nLoad the following files to restore my session state:")
+        for idx, filepath in enumerate(files, 1):
+            print(f"{idx}. {filepath.absolute()}")
+        print("\nBased on the state file, resume the current task.")
+    print_siblings(store_root(), base_dir)
 
 def collect_orphans(store: Path, prune: bool) -> None:
     for pattern in ("repos/*/clones/*/clone.json", "pinned/*/workspace.json", "standalone/*/scope.json"):
@@ -358,7 +421,12 @@ def main():
     
     subparsers.add_parser("prompt", help="Print the absolute path instruction for LLM injection")
     
-    subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
+    resume_parser = subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
+    resume_parser.add_argument("--with", dest="siblings", action="append", default=[], metavar="KEY",
+                               help="Also load a sibling worktree's fragments (repeatable)")
+
+    adopt_parser = subparsers.add_parser("adopt", help="Move a sibling worktree's fragments into this scope")
+    adopt_parser.add_argument("key", help="The sibling's paths/<key> folder name")
 
     for command in ("pin", "unpin"):
         pin_parser = subparsers.add_parser(command, help=f"{command.capitalize()} a workspace root")
@@ -402,7 +470,10 @@ def main():
     elif args.command == "prompt":
         generate_prompt(base_dir)
     elif args.command == "resume":
-        generate_resume(base_dir, members_of(store_root(), base_dir))
+        extra = [sibling(store_root(), base_dir, key) for key in args.siblings]
+        generate_resume(base_dir, members_of(store_root(), base_dir), extra)
+    elif args.command == "adopt":
+        adopt(base_dir, sibling(store_root(), base_dir, args.key))
 
 if __name__ == "__main__":
     try:

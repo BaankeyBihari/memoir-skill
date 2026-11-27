@@ -67,7 +67,8 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 | `/memoir state` | Overwrites `state-current.md` (Goal, Completed, Blocked/Pending, Next Action) |
 | `/memoir capture` | Writes every unrecorded decision, log, reference and feedback from the conversation, then updates `state-current.md` |
 | `/memoir coach` | Captures, then recommends CONTINUE, COMPACT or CLEAR with evidence and paste-ready next steps |
-| `/memoir reload` | Archives superseded decisions and loads the last recorded session |
+| `/memoir reload [key ...]` | Archives superseded decisions and loads the last recorded session; lists sibling worktrees with fragments, and loads each given sibling key's fragments too |
+| `/memoir adopt <key>` | Moves a merged sibling worktree's decisions, logs, references and feedback into this scope (state stays) |
 | `/memoir pin [path]` | Groups a non-Git workspace and its subfolders (default current directory): each folder keeps its own notes, `reload` loads the whole group's, state stays per folder |
 | `/memoir unpin [path]` | Removes the group; every folder keeps its own notes |
 
@@ -136,7 +137,8 @@ To make memoir the default memory, paste this block into `~/.claude/CLAUDE.md` (
 | `scope` | Prints the wiki scope root (repository or pinned group), then each fragment directory it covers |
 | `archive <files>` | Moves fragments to `archive/` as `YYYYMMDD-<name>` and never overwrites |
 | `archive --superseded` | Archives every decision named on another decision's `Supersedes:` line, writing a `Superseded-By:` back-link into each archived copy |
-| `resume` | Prints the path and the files to load, `state-current.md` first |
+| `resume [--with <key>]...` | Prints the path and the files to load, `state-current.md` first, then sibling worktrees that have fragments; `--with` adds a sibling's fragments |
+| `adopt <key>` | Moves a sibling worktree's fragments into this scope, suffixing name collisions |
 
 For agents without shell access, run `memoir.py resume | pbcopy`, clear the chat, and paste.
 
