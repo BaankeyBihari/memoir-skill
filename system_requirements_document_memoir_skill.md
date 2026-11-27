@@ -93,6 +93,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │               ├── clone.json                     # {"root": "/abs/path/to/main/checkout", "last_seen": "..."}
 │               └── paths/
 │                   ├── _main/                     # Primary checkout root
+│                   │   ├── worktree.json          # {"root": "/abs/path/to/worktree/toplevel", "last_seen": "..."}
 │                   │   ├── active/
 │                   │   │   ├── state-current.md
 │                   │   │   ├── decision-*.md
@@ -101,6 +102,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │                   │   │   └── feedback-*.md
 │                   │   └── archive/
 │                   └── Worktrees__wt-feature/     # Worktree relative to --show-toplevel
+│                       ├── worktree.json
 │                       ├── active/
 │                       └── archive/
 ├── pinned/                                        # Scope 2: Groups over standalone scopes (no fragments)
@@ -128,7 +130,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
   * Compute `sha8 = sha256(realpath(git rev-parse --git-common-dir))[:8]`.
   * Set `clone_id = "<project-slug>--<sha8>"`. Persist/update `clone.json` at `<STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/clone.json` with `{"root": MAIN_ROOT, "last_seen": "<ISO-8601>"}`.
   * Compute `TOPLEVEL = realpath(git rev-parse --show-toplevel)`. If `TOPLEVEL == MAIN_ROOT`, `path_key = "_main"`. Otherwise, if `TOPLEVEL` is inside `MAIN_ROOT`, use `relpath(TOPLEVEL, MAIN_ROOT).replace("/", "__")`; else use `basename(TOPLEVEL)`.
-  * Set `$BASE_DIR = <STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/paths/<path_key>`.
+  * Set `$BASE_DIR = <STORE_ROOT>/repos/<repo_id>/clones/<clone_id>/paths/<path_key>`. Persist/update `$BASE_DIR/worktree.json` with `{"root": TOPLEVEL, "last_seen": "<ISO-8601>"}` whenever `clone.json` is written. Siblings (FR-2.4, FR-2.9) learn whether their worktree still exists from this record. They never decode `path_key`, because `__` joins are ambiguous and external worktrees are keyed by basename alone.
 * **FR-1.4 (Non-Git Pinned & Standalone Resolution):**
   * Store canonical `realpath` strings in `<STORE_ROOT>/pinned.json` (JSON array of strings).
   * For non-Git `REAL_CWD = realpath($PWD)`, find all entries `PIN` in `pinned.json` where `REAL_CWD == PIN` or `REAL_CWD` starts with `PIN + "/"`.
@@ -144,10 +146,14 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 * **FR-2.2 (`prompt`):** Output the system instruction string containing the exact absolute path to `$BASE_DIR/active/`.
 * **FR-2.3 (`archive`):** Move specified superseded files from `active/` to `archive/`, prepending `YYYYMMDD-`. With `--superseded`, move every active decision named on another active decision's `Supersedes:` line into `archive/`, writing `Superseded-By: <new-file.md>` into the active copy prior to moving so the operation is crash-safe and idempotent. In a pinned group, `Supersedes:` lines are read from every member; a named file is looked up in the superseding decision's own scope first, else in the only member holding it, and archived inside its own scope. A name held by several other members is skipped with a warning. Explicit `archive <files>` acts on `$BASE_DIR` only.
 * **FR-2.4 (`resume`):** Output the `prompt` instruction followed by a copy-paste ready list of exact absolute paths of all active files, `state-current.md` first. In a pinned group the list holds `$BASE_DIR`'s `state-current.md`, then the active fragments of every member (FR-1.4); other members' `state-current.md` files are never listed.
+  * **Sibling paths (Git only):** A *sibling* is every other `paths/<key>/` of the same clone that has at least one `decision-`, `log-`, `reference-`, or `feedback-` fragment in its `active/`. After the file list, `resume` prints one line per sibling, sorted by key: `- <key>: <d> decisions, <l> logs, <r> references, <f> feedback; newest <YYYY-MM-DD>; worktree present|missing|unknown`. `newest` is the local date of the most recent fragment file modification time. `worktree` is `present` if the sibling's `worktree.json` `root` is an existing directory, `missing` if it is not, and `unknown` if the record is absent or unreadable. The sibling block is introduced by `Sibling worktrees with fragments (not loaded; add with resume --with <key>):` and is omitted when there are no siblings. It also prints when the current scope has no files, in which case "No recorded session found" stays the first result line. Siblings are listed, never loaded by default.
+  * **`--with <key>` (repeatable):** Append the named sibling's active `decision-`, `log-`, `reference-`, and `feedback-` fragments to the file list for this invocation only. The sibling's `state-current.md` is never listed. `<key>` MUST be the name of an existing directory directly under the clone's `paths/` that is not `$BASE_DIR`. Any other value, or `--with` outside a Git scope, exits `1` with `[Memoir] No sibling path <key> in <clone dir>`. `--with` is read-only: `archive --superseded` keeps acting on the current scope only.
+  * **Rejected: auto-loading every sibling.** Making `members_of` return every `paths/*` of the clone was rejected. Sibling folders outlive their worktrees, so `reload` would keep loading decisions from dropped or never-merged branches as current, and the load set would grow without bound. A branch's decisions become project truth only when the branch merges, which `adopt` (FR-2.9) expresses.
 * **FR-2.5 (`path`):** Print the resolved `$BASE_DIR` for user inspection.
 * **FR-2.6 (`pin [path]` & `unpin [path]`):** Resolve `realpath(path)` (defaulting to `.`) and add or remove it from `<STORE_ROOT>/pinned.json` (idempotent). Print the resolved pinned workspace slug and path. Pinning moves no fragment: the folder and every folder under it join the group at once (FR-1.4). `unpin` only removes the group's entry; each folder keeps its notes in its own standalone scope, and `pinned/<slug>/` (wiki included) stays. The `memoir` skill exposes both as `/memoir pin [path]` and `/memoir unpin [path]`.
 * **FR-2.7 (`gc [--prune]`):** Scan `clone.json`, `workspace.json`, and `scope.json` across `<STORE_ROOT>/repos/`, `<STORE_ROOT>/pinned/`, and `<STORE_ROOT>/standalone/`. Report entries whose `root` directory no longer exists on disk (`--dry-run` default); remove those orphaned staging directories when `--prune` is passed.
 * **FR-2.8 (`scope`):** Read-only like `path`. Print the wiki scope root (`<STORE_ROOT>/repos/<repo_id>` or `<STORE_ROOT>/pinned/<slug>`) on the first line, then one fragment directory per line: every `clones/*/paths/*` for a repository, every member's `$BASE_DIR` for a pinned group. Print nothing for a directory outside Git and outside any pin.
+* **FR-2.9 (`adopt <key>`):** Git only. `<key>` is validated as in FR-2.4 `--with`, with the same error. Move every `decision-`, `log-`, `reference-`, and `feedback-` fragment from the sibling's `active/` into `$BASE_DIR/active/`, keeping its content. The sibling's `state-current.md` and `archive/` stay where they are. A name that already exists in `$BASE_DIR/active/` gets `-2`, `-3`, and so on, appended to its stem: the first free name (FR-3.1). In every adopted file, each `Supersedes:` and `Superseded-By:` line that names a renamed adopted file is rewritten to the new name. Other lines and files in `$BASE_DIR` are not touched. Each target is written atomically before its source is removed, so a crash leaves a duplicate, never a lost fragment. Output: `[Memoir] Adopted <n> files from <key>.`, then one absolute target path per line, followed by a space and `(renamed from <old name>)` when renamed. With nothing to adopt, print `[Memoir] Adopted 0 files from <key>.` and exit `0`. After adopt, `archive --superseded` (FR-2.3) treats adopted decisions like any other active file. Sibling folders whose worktree is gone are not pruned: `gc` (FR-2.7) does not read `worktree.json`.
 
 ### 4.3 LLM Operations & Commands (`skills/memoir/SKILL.md`)
 All v1 fragment schemas and slash commands remain unchanged:
@@ -157,10 +163,11 @@ All v1 fragment schemas and slash commands remain unchanged:
 * **FR-3.4 (`/memoir reference [text]`):** Write `active/reference-{slug}.md` with verified `Target:` and `Why:`.
 * **FR-3.5 (`/memoir state`):** Overwrite `active/state-current.md` (max 3 bullets per section: `Goal`, `Completed`, `Blocked/Pending`, `Next Action`).
 * **FR-3.6 (`/memoir coach`):** Run capture (FR-3.9), then output exactly one template (`CLEAR` > `COMPACT` > `CONTINUE`) with concrete session evidence.
-* **FR-3.7 (`/memoir reload`):** Run `memoir.py archive --superseded`, then `memoir.py resume`, read every listed file starting with `state-current.md`, and report restored Goal and Next Action.
+* **FR-3.7 (`/memoir reload [key ...]`):** Run `memoir.py archive --superseded`, then `memoir.py resume` (passing `--with <key>` for each given key), read every listed file starting with `state-current.md`, and report restored Goal and Next Action plus the sibling list `resume` printed (FR-2.4).
 * **FR-3.8 (Automatic decisions):** Automatically record `decision-{slug}.md` when the user chooses among alternatives or says `"decision:"` or `"let's go with X"`.
 * **FR-3.9 (`/memoir capture`):** Sweep active conversation for unrecorded decisions, logs, references, and feedback, write missing fragments, update `state-current.md`, and print `Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated`.
 * **FR-3.10 (`/memoir feedback [text]`):** Record durable collaboration/style preferences in `active/feedback-{slug}.md`.
+* **FR-3.11 (`/memoir adopt <key>`):** Run `memoir.py adopt <key>` (FR-2.9) and report the moved and renamed files it prints. Use it once a sibling worktree's branch has merged.
 
 ---
 

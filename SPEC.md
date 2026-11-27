@@ -24,6 +24,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │               ├── clone.json                     # {"root": "/abs/path/to/main/checkout", "last_seen": "..."}
 │               └── paths/
 │                   ├── _main/                     # Primary checkout root
+│                   │   ├── worktree.json          # {"root": "/abs/path/to/worktree/toplevel", "last_seen": "..."}
 │                   │   ├── active/
 │                   │   │   ├── state-current.md
 │                   │   │   ├── decision-*.md
@@ -32,6 +33,7 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │                   │   │   └── feedback-*.md
 │                   │   └── archive/
 │                   └── Worktrees__wt-feature/     # Worktree relative to --show-toplevel
+│                       ├── worktree.json
 │                       ├── active/
 │                       └── archive/
 ├── pinned/                                        # Scope 2: Groups over standalone scopes (no fragments)
@@ -97,11 +99,12 @@ wiki's `index.md` or edit its pages.
 
 ## JSON records
 
-All six files are UTF-8 JSON. Missing pinned.json means an empty array.
+All seven files are UTF-8 JSON. Missing pinned.json means an empty array.
 
 | File | JSON shape | Meaning |
 | --- | --- | --- |
 | clone.json | `{"root":"/main/checkout","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical main checkout and ISO-8601 timestamp |
+| worktree.json | `{"root":"/worktree/toplevel","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical `--show-toplevel` of the checkout or worktree keyed by its `paths/<key>/` and ISO-8601 timestamp; tells sibling listing (SRD FR-2.4) whether the worktree still exists |
 | scope.json | `{"root":"/directory","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical non-Git directory of a standalone scope and ISO-8601 timestamp |
 | workspace.json | `{"root":"/workspace","last_seen":"2026-01-01T00:00:00+00:00"}` | Required strings, canonical pinned root and ISO-8601 timestamp |
 | meta.json | `{"remote":"https://host/owner/repo","sync_to_repo":false,"sync_target":"docs/wiki"}` | Optional repo configuration. Remote is a string, mirror flag a boolean (default false), target a repo-relative directory string (default docs/wiki). |
