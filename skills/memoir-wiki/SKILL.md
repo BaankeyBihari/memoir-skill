@@ -1,5 +1,7 @@
 ---
 name: memoir-wiki
+license: MIT
+allowed-tools: Read Glob Grep Write(~/.memoir/**/wiki/**) Edit(~/.memoir/**/wiki/**)
 description: Compile memoir session fragments (decisions, logs, references, feedback) into a cross-linked Markdown wiki for the current Git repository or pinned workspace. Use for /memoir-wiki ingest|query|lint, and when the user asks to build, update or browse the project wiki or knowledge base, asks why the project chose something or how a subsystem fits together across past sessions, to turn accumulated memoir fragments into documentation, to audit the wiki for broken links, orphan pages, contradictions or stale file references, or to mirror it into the repository (sync_to_repo). Not for recording a new decision or session state, which is the memoir skill's job.
 ---
 
