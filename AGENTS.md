@@ -27,3 +27,18 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - Releases use bare, 1-based, non-zero-padded CalVer tags (`YYYY.M.N`, e.g., `2026.11.3`, `2027.1.1`), computed by `scripts/next-version.sh` in `.github/workflows/release.yml` (`gh workflow run release.yml --ref main`). Keep version fields out of source skills and `plugin.json`. Stamp packaged skills with the computed tag. Never push release tags by hand.
 - Run `mise run lint`, `mise run test`, and `mise run build` (or `python3 test_memoir.py`, `python3 scripts/test_install.py`, and `cd dashboard && go test -race ./...`) before calling a change done.
 - Never add AI attribution to commits, PRs, issues, or files.
+
+<!-- memoir:begin -->
+## Memory: memoir
+- Record decisions with the `memoir` skill. When I choose among alternatives or say "decision:" / "let's go with X", write a decision fragment (`/memoir decision`) without being asked. Don't keep decisions anywhere else.
+- Record milestones and blocking errors with `/memoir log`, and external paths or docs with `/memoir reference`.
+- When I state a standing preference for how we work (communication, review, structure), record it with `/memoir feedback`.
+- After finishing a task step, or before the context gets long, update `/memoir state`.
+- When I say "resume" or start a session on unfinished work, run `/memoir reload`.
+<!-- memoir:end -->
+
+<!-- memoir-wiki:begin -->
+## Project knowledge: memoir-wiki
+- For any project knowledge search, including codebase exploration, consult the current project's memoir wiki first if its index exists.
+- Prefer an Explore subagent using the `memoir-wiki` skill's automatic read-only query. If delegation or skill access is unavailable, perform the lookup directly. Use its page citations, verify current behavior against the checkout, and continue the search if the wiki is absent or incomplete.
+<!-- memoir-wiki:end -->
