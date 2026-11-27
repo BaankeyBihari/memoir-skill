@@ -35,6 +35,8 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - When I state a standing preference for how we work (communication, review, structure), record it with `/memoir feedback`.
 - After finishing a task step, or before the context gets long, update `/memoir state`.
 - When I say "resume" or start a session on unfinished work, run `/memoir reload`.
+- When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, and feedback for this reload.
+- To review the delegated task’s goal, blockers, and next action, run `/memoir reload` in its worktree. After the branch merges, use `/memoir adopt <key>` from the receiving worktree to bring those fragments into future reloads. The state snapshot stays with its original worktree.
 <!-- memoir:end -->
 
 <!-- memoir-wiki:begin -->
