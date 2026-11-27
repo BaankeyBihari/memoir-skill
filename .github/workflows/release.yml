@@ -39,10 +39,7 @@ jobs:
       - name: Package skills bundle
         env:
           TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          mkdir -p dist
-          for skill in memoir memoir-wiki; do echo "$TAG" > "skills/$skill/VERSION"; done
-          tar -czf dist/memoir-skills.tar.gz -C skills --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' memoir memoir-wiki
+        run: bash scripts/package-skills.sh dist "$TAG"
       - name: Cross-compile dashboard and checksum
         working-directory: dashboard
         env:

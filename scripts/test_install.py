@@ -1,13 +1,11 @@
 """Installer tests for scripts/install.sh. Run: python3 scripts/test_install.py"""
 import hashlib
-import io
 import json
 import os
 import platform
 import shutil
 import stat
 import subprocess
-import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -32,14 +30,10 @@ def expected_ui_asset() -> str:
 
 def build_mock_release(release_dir: Path, ui_bytes: bytes = b"binary", tamper_sums: bool = False, version: str = "") -> None:
     release_dir.mkdir(parents=True, exist_ok=True)
-    skills_tar = release_dir / "memoir-skills.tar.gz"
-    with tarfile.open(skills_tar, "w:gz") as tf:
-        for name in ("memoir", "memoir-wiki"):
-            tf.add(REPO_ROOT / "skills" / name, arcname=name)
-            if version:  # release.yml stamps each skill folder
-                info = tarfile.TarInfo(f"{name}/VERSION")
-                info.size = len(version) + 1
-                tf.addfile(info, io.BytesIO(f"{version}\n".encode()))
+    package = ["bash", "scripts/package-skills.sh", str(release_dir)]
+    if version:
+        package.append(version)
+    subprocess.run(package, cwd=REPO_ROOT, check=True)
 
     asset_name = expected_ui_asset()
     ui_file = release_dir / asset_name
@@ -402,8 +396,13 @@ class TestInstaller(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertTrue((home / ".agents/skills/memoir/SKILL.md").is_file())
-            self.assertTrue((home / ".agents/skills/memoir-wiki/SKILL.md").is_file())
+            for name in ("memoir", "memoir-wiki"):
+                installed = home / ".agents/skills" / name
+                self.assertEqual((installed / "VERSION").read_text(), "2026.11.1\n")
+                self.assertEqual((installed / "LICENSE").read_bytes(), (REPO_ROOT / "LICENSE").read_bytes())
+                source = (REPO_ROOT / "skills" / name / "SKILL.md").read_text()
+                stamp = 'metadata:\n  version: "2026.11.1"\n'
+                self.assertEqual((installed / "SKILL.md").read_text(), source.replace("---\n", "---\n" + stamp, 1))
             self.assertEqual((home / ".local/bin/memoir-ui").read_bytes(), ui_bytes)
             self.assertEqual(
                 res.stdout.splitlines()[-1],

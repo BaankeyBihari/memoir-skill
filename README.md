@@ -148,9 +148,9 @@ The default store is `~/.memoir`. Set `MEMOIR_STORE` to override its root. Run `
 
 ## Releases
 
-Releases use bare, 1-based, non-zero-padded CalVer tags (`YYYY.M.N`, e.g., `2026.11.3`, `2027.1.1`), so every version is also valid semver. The tag is the only version: skills and `plugin.json` carry none. Maintainers cut a release with `gh workflow run release.yml --ref main`, which computes the next tag, marks the release Latest, and fast-forwards the `stable` branch. Each release publishes:
+Releases use bare, 1-based, non-zero-padded CalVer tags (`YYYY.M.N`, e.g., `2026.11.3`, `2027.1.1`), so every version is also valid semver. Maintainers cut a release with `gh workflow run release.yml --ref main`, which computes the next tag, marks the release Latest, and fast-forwards the `stable` branch. Each release publishes:
 
-- `memoir-skills.tar.gz` (`memoir` and `memoir-wiki`)
+- `memoir-skills.tar.gz` contains `memoir` and `memoir-wiki`. Each bundled skill records the release tag in its `SKILL.md` frontmatter under `metadata.version` and in its `VERSION` file. Skills installed from a Git checkout are unversioned.
 - `memoir-ui-{darwin,linux}-{arm64,amd64}` static binaries
 - `SHA256SUMS` covering all release assets
 

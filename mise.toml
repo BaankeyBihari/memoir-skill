@@ -18,7 +18,7 @@ run = 'mkdir -p dist && cd dashboard && CGO_ENABLED=0 go build -trimpath -ldflag
 
 [tasks."build:skills"]
 description = "Package memoir and memoir-wiki skills into dist/memoir-skills.tar.gz"
-run = "mkdir -p dist && tar -czf dist/memoir-skills.tar.gz -C skills --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' memoir memoir-wiki"
+run = "bash scripts/package-skills.sh dist"
 
 [tasks.test]
 description = "Run CLI, installer, and dashboard test suites"
@@ -59,6 +59,8 @@ for skill in (Path("skills/memoir"), Path("skills/memoir-wiki")):
     assert re.fullmatch(r"[a-z0-9-]{1,64}", name), f"bad name: {name!r}"
     assert name == skill.name, f"name {name!r} != folder {skill.name!r}"
     assert 0 < len(desc) <= 1024, f"description length {len(desc)}"
+    assert meta.get("license", "").strip() == "MIT", f"{skill}: expected MIT license"
+    assert meta.get("allowed-tools", "").split(), f"{skill}: missing allowed-tools"
 assert os.access("skills/memoir/scripts/memoir.py", os.X_OK), "memoir.py not executable"
 assert os.access("scripts/install.sh", os.X_OK), "scripts/install.sh not executable"
 assert os.access("scripts/uninstall.sh", os.X_OK), "scripts/uninstall.sh not executable"
