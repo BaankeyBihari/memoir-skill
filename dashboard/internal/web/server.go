@@ -1,3 +1,4 @@
+// Package web serves the embedded memoir-ui frontend, REST endpoints, and fsnotify SSE stream.
 package web
 
 import (
@@ -16,6 +17,14 @@ import (
 
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/render"
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
+)
+
+const (
+	hdrCacheControl = "Cache-Control"
+	hdrContentType  = "Content-Type"
+	valNoCache      = "no-cache"
+	eventChange     = "change"
+	appName         = "memoir-ui"
 )
 
 //go:embed assets/*
@@ -51,7 +60,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	assetServer := http.StripPrefix("/assets/", http.FileServer(http.FS(sub)))
 	mux.Handle("GET /assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set(hdrCacheControl, valNoCache)
 		assetServer.ServeHTTP(w, r)
 	}))
 
@@ -103,13 +112,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing embedded index", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set(hdrContentType, "text/html; charset=utf-8")
+	w.Header().Set(hdrCacheControl, valNoCache)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	info, err := os.Stat(s.StoreRoot)
 	exists := err == nil && info.IsDir()
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -117,13 +126,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"store":        s.StoreRoot,
 		"store_exists": exists,
 		"port":         s.Port,
-		"app":          "memoir-ui",
+		"app":          appName,
 		"pid":          os.Getpid(),
 		"version":      s.Version,
 	})
 }
 
-func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTree(w http.ResponseWriter, _ *http.Request) {
 	tree, err := store.Scan(s.StoreRoot)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -209,7 +218,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleGCList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGCList(w http.ResponseWriter, _ *http.Request) {
 	orphans, err := store.ListOrphans(s.StoreRoot)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -254,7 +263,7 @@ func (s *Server) handleGCPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Hub != nil {
 		s.Hub.Broadcast(Event{
-			Type:      "change",
+			Type:      eventChange,
 			Op:        "remove",
 			Path:      req.Path,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -274,8 +283,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set(hdrContentType, "text/event-stream")
+	w.Header().Set(hdrCacheControl, valNoCache)
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
@@ -303,7 +312,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case ev := <-ch:
 			eventName := ev.Type
 			if eventName == "" {
-				eventName = "change"
+				eventName = eventChange
 			}
 			if err := writeSSEEvent(w, eventName, ev); err != nil {
 				return
@@ -328,7 +337,7 @@ func writeSSEEvent(w http.ResponseWriter, name string, payload any) error {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(hdrContentType, "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

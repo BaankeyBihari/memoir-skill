@@ -7,15 +7,17 @@
   <script>
     (function () {
       try {
-        var t = localStorage.getItem('memoir-ui.theme') || 'midnight';
+        const t = localStorage.getItem('memoir-ui.theme') || 'midnight';
         if (t !== 'midnight') {
           document.documentElement.setAttribute('data-theme', t);
         }
-        var w = parseInt(localStorage.getItem('memoir-ui.sidebarWidth') || '', 10);
+        const w = Number.parseInt(localStorage.getItem('memoir-ui.sidebarWidth') || '', 10);
         if (w >= 220 && w <= 640) {
           document.documentElement.style.setProperty('--sidebar-width', w + 'px');
         }
-      } catch (_) {}
+      } catch {
+        // Ignore unavailable localStorage in restricted browser contexts.
+      }
     })();
   </script>
   <link rel="stylesheet" href="/assets/app.css">
@@ -23,7 +25,7 @@
 <body>
   <header class="topbar">
     <div class="brand-bar">
-      <a href="#" class="brand" onclick="clearSelection(event)">memoir-ui</a>
+      <a href="/" class="brand" onclick="clearSelection(event)">memoir-ui</a>
       <span id="storePathBadge" class="store-pill mono" title="Active Memoir store root">loading...</span>
     </div>
     <div class="header-actions">
@@ -122,12 +124,12 @@
             Watching store for file updates via <code class="mono">/events</code>...
           </div>
           <div id="eventLogWrap" class="table-wrap hidden">
-            <table>
+            <table aria-label="Recent live store events">
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Op</th>
-                  <th>Store Path</th>
+                  <th scope="col">Time</th>
+                  <th scope="col">Op</th>
+                  <th scope="col">Store Path</th>
                 </tr>
               </thead>
               <tbody id="eventLogBody"></tbody>
@@ -173,7 +175,7 @@
   </div>
 
   <!-- Global Cmd+K Search Modal -->
-  <div id="searchModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Search Memoir Store" onclick="onModalBackdropClick(event, 'searchModal')">
+  <div id="searchModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Search Memoir Store">
     <div class="modal search-modal">
       <div class="search-input-row">
         <input id="searchInput" type="text" placeholder="Search decisions, wikis, logs, references, feedback..." autocomplete="off" oninput="onSearchInput()" onkeydown="onSearchKeyDown(event)">
@@ -202,7 +204,7 @@
   </div>
 
   <!-- Orphaned Scopes Overview Modal -->
-  <div id="orphansModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Orphaned Scopes" onclick="onModalBackdropClick(event, 'orphansModal')">
+  <div id="orphansModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Orphaned Scopes">
     <div class="modal" style="max-width:660px;">
       <div class="modal-header">
         <h3>Orphaned Clones &amp; Workspaces</h3>
@@ -216,7 +218,7 @@
   </div>
 
   <!-- Confirmed Prune Modal -->
-  <div id="pruneModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm Orphan Prune" onclick="onModalBackdropClick(event, 'pruneModal')">
+  <div id="pruneModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm Orphan Prune">
     <div class="modal">
       <div class="modal-header">
         <h3>Prune Orphaned Scope</h3>

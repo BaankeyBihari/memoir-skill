@@ -1,3 +1,4 @@
+// Package render parses Memoir headers, wikilinks, backlinks, and decision chains into HTML and metadata.
 package render
 
 import (

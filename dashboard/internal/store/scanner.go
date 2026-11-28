@@ -58,39 +58,47 @@ type groupMember struct {
 	Label string
 }
 
+func readPinnedSlugsByRoot(storeRoot string) map[string]string {
+	slugByRoot := make(map[string]string)
+	entries, err := os.ReadDir(filepath.Join(storeRoot, dirPinned))
+	if err != nil {
+		return slugByRoot
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if rec := readScopeRecord(filepath.Join(storeRoot, dirPinned, entry.Name(), fileWorkspaceJSON)); rec.Root != "" {
+			slugByRoot[rec.Root] = entry.Name()
+		}
+	}
+	return slugByRoot
+}
+
 // pinMembers maps each grouped standalone scope ID to its group: the pin that is its scope.json root's
 // longest pinned.json ancestor (SPEC.md, Identity and routing). Membership is computed, never stored.
 func pinMembers(storeRoot string) map[string]groupMember {
 	members := make(map[string]groupMember)
 
 	var pins []string
-	data, err := os.ReadFile(filepath.Join(storeRoot, "pinned.json"))
+	data, err := os.ReadFile(filepath.Join(storeRoot, filePinnedJSON))
 	if err != nil || json.Unmarshal(data, &pins) != nil {
 		return members
 	}
-	slugByRoot := make(map[string]string)
-	if entries, err := os.ReadDir(filepath.Join(storeRoot, "pinned")); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-				if rec := readScopeRecord(filepath.Join(storeRoot, "pinned", entry.Name(), "workspace.json")); rec.Root != "" {
-					slugByRoot[rec.Root] = entry.Name()
-				}
-			}
-		}
-	}
+	slugByRoot := readPinnedSlugsByRoot(storeRoot)
 
-	entries, _ := os.ReadDir(filepath.Join(storeRoot, "standalone"))
+	entries, _ := os.ReadDir(filepath.Join(storeRoot, dirStandalone))
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		root := readScopeRecord(filepath.Join(storeRoot, "standalone", entry.Name(), "scope.json")).Root
+		root := readScopeRecord(filepath.Join(storeRoot, dirStandalone, entry.Name(), fileScopeJSON)).Root
 		pin, rel := longestPin(pins, root)
 		slug, ok := slugByRoot[pin]
 		if !ok {
 			continue
 		}
-		label := "root"
+		label := labelRoot
 		if rel != "." {
 			label = filepath.ToSlash(rel)
 		}
@@ -103,14 +111,14 @@ func pinMembers(storeRoot string) map[string]groupMember {
 func pinGroups(storeRoot string, members map[string]groupMember) map[string][]PathScope {
 	groups := make(map[string][]PathScope)
 	for id, m := range members {
-		state, active, archive := scanActiveArchive(storeRoot, filepath.Join(storeRoot, "standalone", id))
+		state, active, archive := scanActiveArchive(storeRoot, filepath.Join(storeRoot, dirStandalone, id))
 		groups[m.Slug] = append(groups[m.Slug], PathScope{Key: id, Label: m.Label, State: state, Active: active, Archive: archive})
 	}
 	for _, paths := range groups {
 		sort.Slice(paths, func(i, j int) bool {
 			a, b := paths[i].Label, paths[j].Label
-			if (a == "root") != (b == "root") {
-				return a == "root"
+			if (a == labelRoot) != (b == labelRoot) {
+				return a == labelRoot
 			}
 			return a < b
 		})
@@ -137,7 +145,7 @@ func longestPin(pins []string, root string) (string, string) {
 }
 
 func scanRepos(storeRoot string) []RepoScope {
-	reposDir := filepath.Join(storeRoot, "repos")
+	reposDir := filepath.Join(storeRoot, dirRepos)
 	entries, err := os.ReadDir(reposDir)
 	if err != nil {
 		return make([]RepoScope, 0)
@@ -153,9 +161,9 @@ func scanRepos(storeRoot string) []RepoScope {
 		scope := RepoScope{
 			ID:     id,
 			Label:  strings.ReplaceAll(id, "__", "/"),
-			Meta:   readRepoMeta(filepath.Join(repoAbs, "meta.json")),
-			Wiki:   scanWiki(storeRoot, filepath.Join(repoAbs, "wiki")),
-			Clones: scanClones(storeRoot, repoAbs, filepath.ToSlash(filepath.Join("repos", id))),
+			Meta:   readRepoMeta(filepath.Join(repoAbs, fileMetaJSON)),
+			Wiki:   scanWiki(storeRoot, filepath.Join(repoAbs, dirWiki)),
+			Clones: scanClones(storeRoot, repoAbs, filepath.ToSlash(filepath.Join(dirRepos, id))),
 		}
 		out = append(out, scope)
 	}
@@ -163,7 +171,7 @@ func scanRepos(storeRoot string) []RepoScope {
 }
 
 func scanClones(storeRoot, repoAbs, repoRel string) []CloneScope {
-	clonesDir := filepath.Join(repoAbs, "clones")
+	clonesDir := filepath.Join(repoAbs, dirClones)
 	entries, err := os.ReadDir(clonesDir)
 	if err != nil {
 		return make([]CloneScope, 0)
@@ -176,22 +184,22 @@ func scanClones(storeRoot, repoAbs, repoRel string) []CloneScope {
 		}
 		id := entry.Name()
 		cloneAbs := filepath.Join(clonesDir, id)
-		rec := readScopeRecord(filepath.Join(cloneAbs, "clone.json"))
+		rec := readScopeRecord(filepath.Join(cloneAbs, fileCloneJSON))
 		out = append(out, CloneScope{
 			ID:       id,
 			Label:    id,
-			RelPath:  path.Join(repoRel, "clones", id),
+			RelPath:  path.Join(repoRel, dirClones, id),
 			Root:     rec.Root,
 			LastSeen: rec.LastSeen,
 			Orphaned: CheckRootOrphaned(rec.Root),
-			Paths:    scanPaths(storeRoot, filepath.Join(cloneAbs, "paths"), "_main"),
+			Paths:    scanPaths(storeRoot, filepath.Join(cloneAbs, dirPaths), keyMain),
 		})
 	}
 	return out
 }
 
 func scanPinned(storeRoot string, groups map[string][]PathScope) []PinnedScope {
-	pinnedDir := filepath.Join(storeRoot, "pinned")
+	pinnedDir := filepath.Join(storeRoot, dirPinned)
 	entries, err := os.ReadDir(pinnedDir)
 	if err != nil {
 		return make([]PinnedScope, 0)
@@ -204,23 +212,23 @@ func scanPinned(storeRoot string, groups map[string][]PathScope) []PinnedScope {
 		}
 		id := entry.Name()
 		pinAbs := filepath.Join(pinnedDir, id)
-		rec := readScopeRecord(filepath.Join(pinAbs, "workspace.json"))
+		rec := readScopeRecord(filepath.Join(pinAbs, fileWorkspaceJSON))
 		out = append(out, PinnedScope{
 			ID:       id,
 			Label:    id,
-			RelPath:  path.Join("pinned", id),
+			RelPath:  path.Join(dirPinned, id),
 			Root:     rec.Root,
 			LastSeen: rec.LastSeen,
 			Orphaned: CheckRootOrphaned(rec.Root),
-			Wiki:     scanWiki(storeRoot, filepath.Join(pinAbs, "wiki")),
-			Paths:    append(scanPaths(storeRoot, filepath.Join(pinAbs, "paths"), "_root"), groups[id]...),
+			Wiki:     scanWiki(storeRoot, filepath.Join(pinAbs, dirWiki)),
+			Paths:    append(scanPaths(storeRoot, filepath.Join(pinAbs, dirPaths), keyRoot), groups[id]...),
 		})
 	}
 	return out
 }
 
 func scanStandalone(storeRoot string, members map[string]groupMember) []StandaloneScope {
-	standaloneDir := filepath.Join(storeRoot, "standalone")
+	standaloneDir := filepath.Join(storeRoot, dirStandalone)
 	entries, err := os.ReadDir(standaloneDir)
 	if err != nil {
 		return make([]StandaloneScope, 0)
@@ -285,10 +293,10 @@ func scanPaths(storeRoot, pathsAbs, primaryKey string) []PathScope {
 
 func formatPathLabel(key string) string {
 	switch key {
-	case "_main":
+	case keyMain:
 		return "main"
-	case "_root":
-		return "root"
+	case keyRoot:
+		return labelRoot
 	default:
 		return strings.ReplaceAll(key, "__", "/")
 	}
@@ -299,14 +307,13 @@ func scanActiveArchive(storeRoot, baseAbs string) (*FileNode, []FileNode, []File
 	active := make([]FileNode, 0)
 	archive := make([]FileNode, 0)
 
-	if entries, err := os.ReadDir(filepath.Join(baseAbs, "active")); err == nil {
+	if entries, err := os.ReadDir(filepath.Join(baseAbs, dirActive)); err == nil {
 		for _, entry := range sortedDirEntries(entries) {
 			if !isVisibleMarkdownEntry(entry) {
 				continue
 			}
-			abs := filepath.Join(baseAbs, "active", entry.Name())
-			node := buildFileNode(storeRoot, abs)
-			if entry.Name() == "state-current.md" {
+			node := buildFileNode(storeRoot, filepath.Join(baseAbs, dirActive, entry.Name()))
+			if entry.Name() == fileStateCurrent {
 				n := node
 				state = &n
 				continue
@@ -315,13 +322,12 @@ func scanActiveArchive(storeRoot, baseAbs string) (*FileNode, []FileNode, []File
 		}
 	}
 
-	if entries, err := os.ReadDir(filepath.Join(baseAbs, "archive")); err == nil {
+	if entries, err := os.ReadDir(filepath.Join(baseAbs, dirArchive)); err == nil {
 		for _, entry := range sortedDirEntries(entries) {
 			if !isVisibleMarkdownEntry(entry) {
 				continue
 			}
-			abs := filepath.Join(baseAbs, "archive", entry.Name())
-			archive = append(archive, buildFileNode(storeRoot, abs))
+			archive = append(archive, buildFileNode(storeRoot, filepath.Join(baseAbs, dirArchive, entry.Name())))
 		}
 		sort.Slice(archive, func(i, j int) bool {
 			return archive[i].Name > archive[j].Name
@@ -331,28 +337,33 @@ func scanActiveArchive(storeRoot, baseAbs string) (*FileNode, []FileNode, []File
 	return state, active, archive
 }
 
+func sortByPriority[T any](items []T, nameOf func(T) string, priority map[string]int) {
+	sort.Slice(items, func(i, j int) bool {
+		ni, nj := nameOf(items[i]), nameOf(items[j])
+		pi, oki := priority[ni]
+		pj, okj := priority[nj]
+		if oki && okj {
+			return pi < pj
+		}
+		if oki != okj {
+			return oki
+		}
+		return ni < nj
+	})
+}
+
 func scanWiki(storeRoot, wikiAbs string) *WikiTree {
 	info, err := os.Stat(wikiAbs)
 	if err != nil || !info.IsDir() {
 		return nil
 	}
-
 	entries, err := os.ReadDir(wikiAbs)
 	if err != nil {
 		return nil
 	}
 
-	topPriority := map[string]int{
-		"index.md":       0,
-		"log.md":         1,
-		"conventions.md": 2,
-	}
-	catPriority := map[string]int{
-		"architecture":    0,
-		"decisions":       1,
-		"entities":        2,
-		"troubleshooting": 3,
-	}
+	topPriority := map[string]int{"index.md": 0, "log.md": 1, "conventions.md": 2}
+	catPriority := map[string]int{"architecture": 0, "decisions": 1, "entities": 2, "troubleshooting": 3}
 
 	topPages := make([]FileNode, 0)
 	categories := make([]WikiCategory, 0)
@@ -363,12 +374,8 @@ func scanWiki(storeRoot, wikiAbs string) *WikiTree {
 			continue
 		}
 		if entry.IsDir() {
-			pages := collectWikiCategoryPages(storeRoot, filepath.Join(wikiAbs, name))
-			if len(pages) > 0 {
-				categories = append(categories, WikiCategory{
-					Name:  name,
-					Pages: pages,
-				})
+			if pages := collectWikiCategoryPages(storeRoot, filepath.Join(wikiAbs, name)); len(pages) > 0 {
+				categories = append(categories, WikiCategory{Name: name, Pages: pages})
 			}
 			continue
 		}
@@ -377,29 +384,8 @@ func scanWiki(storeRoot, wikiAbs string) *WikiTree {
 		}
 	}
 
-	sort.Slice(topPages, func(i, j int) bool {
-		pi, oki := topPriority[topPages[i].Name]
-		pj, okj := topPriority[topPages[j].Name]
-		if oki && okj {
-			return pi < pj
-		}
-		if oki != okj {
-			return oki
-		}
-		return topPages[i].Name < topPages[j].Name
-	})
-
-	sort.Slice(categories, func(i, j int) bool {
-		pi, oki := catPriority[categories[i].Name]
-		pj, okj := catPriority[categories[j].Name]
-		if oki && okj {
-			return pi < pj
-		}
-		if oki != okj {
-			return oki
-		}
-		return categories[i].Name < categories[j].Name
-	})
+	sortByPriority(topPages, func(p FileNode) string { return p.Name }, topPriority)
+	sortByPriority(categories, func(c WikiCategory) string { return c.Name }, catPriority)
 
 	return &WikiTree{
 		TopPages:   topPages,
@@ -419,7 +405,7 @@ func collectWikiCategoryPages(storeRoot, catAbs string) []FileNode {
 			}
 			return nil
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+		if d.IsDir() || !strings.HasSuffix(d.Name(), extMD) {
 			return nil
 		}
 		pages = append(pages, buildFileNode(storeRoot, p))
@@ -452,7 +438,7 @@ func ClassifyFile(relPath string) (string, bool) {
 	norm := path.Clean("/" + strings.ReplaceAll(relPath, "\\", "/"))
 	archived := strings.Contains(norm, "/archive/")
 	if strings.Contains(norm, "/wiki/") {
-		return "wiki", false
+		return dirWiki, false
 	}
 
 	base := path.Base(norm)
@@ -461,7 +447,7 @@ func ClassifyFile(relPath string) (string, bool) {
 	}
 
 	switch {
-	case base == "state-current.md":
+	case base == fileStateCurrent:
 		return "state", archived
 	case strings.HasPrefix(base, "decision-"):
 		return "decision", archived
@@ -478,7 +464,7 @@ func ClassifyFile(relPath string) (string, bool) {
 
 // ExtractTitle reads the first Markdown `# ` heading from absPath, falling back to the filename.
 func ExtractTitle(absPath string) string {
-	fallback := strings.TrimSuffix(filepath.Base(absPath), ".md")
+	fallback := strings.TrimSuffix(filepath.Base(absPath), extMD)
 	f, err := os.Open(absPath)
 	if err != nil {
 		return fallback
@@ -498,28 +484,30 @@ func ExtractTitle(absPath string) string {
 	return fallback
 }
 
-// ResolveSafeFile validates relPath and returns a canonical path strictly inside storeRoot.
-func ResolveSafeFile(storeRoot, relPath string) (string, error) {
+func cleanRelMarkdownPath(relPath string) (string, error) {
 	if relPath == "" || strings.ContainsRune(relPath, 0) {
 		return "", ErrInvalidPath
 	}
-	if strings.HasPrefix(relPath, "/") || strings.HasPrefix(relPath, "\\") || filepath.IsAbs(relPath) {
+	if strings.HasPrefix(relPath, "/") || strings.Contains(relPath, "\\") || filepath.IsAbs(relPath) {
 		return "", ErrInvalidPath
 	}
-	if strings.Contains(relPath, "\\") {
-		return "", ErrInvalidPath
-	}
-
-	parts := strings.Split(relPath, "/")
-	for _, seg := range parts {
+	for _, seg := range strings.Split(relPath, "/") {
 		if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, ".") {
 			return "", ErrInvalidPath
 		}
 	}
-
 	clean := path.Clean(relPath)
-	if clean == "." || strings.HasPrefix(clean, "..") || !strings.HasSuffix(clean, ".md") {
+	if clean == "." || strings.HasPrefix(clean, "..") || !strings.HasSuffix(clean, extMD) {
 		return "", ErrInvalidPath
+	}
+	return clean, nil
+}
+
+// ResolveSafeFile validates relPath and returns a canonical path strictly inside storeRoot.
+func ResolveSafeFile(storeRoot, relPath string) (string, error) {
+	clean, err := cleanRelMarkdownPath(relPath)
+	if err != nil {
+		return "", err
 	}
 
 	absRoot, err := filepath.Abs(storeRoot)
@@ -550,11 +538,9 @@ func ResolveSafeFile(storeRoot, relPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(canonRoot, canonTarget)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !isStrictlyInside(canonRoot, canonTarget) {
 		return "", ErrInvalidPath
 	}
-
 	return canonTarget, nil
 }
 
@@ -596,7 +582,7 @@ func isVisibleMarkdownEntry(entry os.DirEntry) bool {
 		return false
 	}
 	name := entry.Name()
-	return !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".md")
+	return !strings.HasPrefix(name, ".") && strings.HasSuffix(name, extMD)
 }
 
 func isAllDigits(s string) bool {

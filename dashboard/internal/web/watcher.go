@@ -153,96 +153,91 @@ func NewWatcher(root string, hub *Hub, debounce time.Duration, onChange func(Eve
 	return w, nil
 }
 
+type debounceTimer struct {
+	timer *time.Timer
+	ch    <-chan time.Time
+}
+
+func (dt *debounceTimer) stop() {
+	if dt.timer != nil && !dt.timer.Stop() {
+		select {
+		case <-dt.timer.C:
+		default:
+		}
+	}
+	dt.ch = nil
+}
+
+func (dt *debounceTimer) reset(d time.Duration) {
+	if dt.timer == nil {
+		dt.timer = time.NewTimer(d)
+	} else {
+		dt.stop()
+		dt.timer.Reset(d)
+	}
+	dt.ch = dt.timer.C
+}
+
+func (w *Watcher) processFSEvent(ev fsnotify.Event) (Event, bool) {
+	if ev.Op == fsnotify.Chmod || shouldIgnorePath(ev.Name) {
+		return Event{}, false
+	}
+	if ev.Has(fsnotify.Create) {
+		if info, err := os.Stat(ev.Name); err == nil && info.IsDir() {
+			if err := w.addDirRecursive(ev.Name); err != nil {
+				log.Printf("memoir-ui: watch subdir %s: %v", ev.Name, err)
+			}
+		}
+	}
+	return Event{
+		Type:      eventChange,
+		Op:        opString(ev.Op),
+		Path:      w.relPath(ev.Name),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}, true
+}
+
+func (w *Watcher) emitEvent(ev Event) {
+	if w.onChange != nil {
+		w.onChange(ev)
+	}
+	if w.hub != nil {
+		w.hub.Broadcast(ev)
+	}
+}
+
 // Start runs the event loop until ctx is canceled.
 func (w *Watcher) Start(ctx context.Context) {
 	defer func() { _ = w.fsw.Close() }()
 
-	var (
-		timer   *time.Timer
-		timerCh <-chan time.Time
-		pending *Event
-	)
-
-	flushPending := func() {
-		if pending == nil {
-			return
-		}
-		ev := *pending
-		pending = nil
-		if w.onChange != nil {
-			w.onChange(ev)
-		}
-		if w.hub != nil {
-			w.hub.Broadcast(ev)
-		}
-	}
-
-	stopTimer := func() {
-		if timer != nil {
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-		}
-		timerCh = nil
-	}
+	var dt debounceTimer
+	var pending *Event
 
 	for {
 		select {
 		case <-ctx.Done():
-			stopTimer()
+			dt.stop()
 			return
-
 		case err, ok := <-w.fsw.Errors:
 			if !ok {
 				return
 			}
 			log.Printf("memoir-ui: watcher error: %v", err)
-
 		case ev, ok := <-w.fsw.Events:
 			if !ok {
 				return
 			}
-			if ev.Op == fsnotify.Chmod {
-				continue
+			if changeEv, emit := w.processFSEvent(ev); emit {
+				pending = &changeEv
+				dt.reset(w.debounce)
 			}
-			if shouldIgnorePath(ev.Name) {
-				continue
+		case <-dt.ch:
+			dt.ch = nil
+			if pending != nil {
+				ev := *pending
+				pending = nil
+				w.emitEvent(ev)
 			}
-
-			if ev.Has(fsnotify.Create) {
-				if info, err := os.Stat(ev.Name); err == nil && info.IsDir() {
-					if err := w.addDirRecursive(ev.Name); err != nil {
-						log.Printf("memoir-ui: watch subdir %s: %v", ev.Name, err)
-					}
-				}
-			}
-
-			changeEv := Event{
-				Type:      "change",
-				Op:        opString(ev.Op),
-				Path:      w.relPath(ev.Name),
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
-			}
-			pending = &changeEv
-			if timer == nil {
-				timer = time.NewTimer(w.debounce)
-			} else {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(w.debounce)
-			}
-			timerCh = timer.C
-
-		case <-timerCh:
-			timerCh = nil
-			flushPending()
 		}
 	}
 }
@@ -287,7 +282,7 @@ func opString(op fsnotify.Op) string {
 	case op.Has(fsnotify.Write):
 		return "write"
 	default:
-		return "change"
+		return eventChange
 	}
 }
 

@@ -17,6 +17,18 @@ import (
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
 )
 
+const (
+	apiHealth     = "/api/health"
+	apiGCPrune    = "/api/gc/prune"
+	testRepoID    = "github.com__acme__app"
+	hdrOrigin     = "Origin"
+	relDirRepos   = "repos"
+	relDirPaths   = "paths"
+	relKeyMain    = "_main"
+	relDirActive  = "active"
+	evilOriginURL = "https://evil.example"
+)
+
 type ssePipeWriter struct {
 	header http.Header
 	pw     *io.PipeWriter
@@ -48,18 +60,49 @@ func (w *ssePipeWriter) Write(p []byte) (int, error) {
 
 func (w *ssePipeWriter) Flush() {}
 
+func writeWebTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func verifyEmbeddedAssets(t *testing.T, h http.Handler) {
+	t.Helper()
+	assetChecks := map[string][]string{
+		"/assets/app.css": {".sidebar-resizer", "--sidebar-width"},
+		"/assets/app.js":  {"initSidebarResize", "formatTreeFileLabel"},
+	}
+	for asset, markers := range assetChecks {
+		areq := httptest.NewRequest(http.MethodGet, asset, nil)
+		arec := httptest.NewRecorder()
+		h.ServeHTTP(arec, areq)
+		if arec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", asset, arec.Code)
+		}
+		assetBody := arec.Body.String()
+		for _, want := range markers {
+			if !strings.Contains(assetBody, want) {
+				t.Fatalf("%s missing %q", asset, want)
+			}
+		}
+	}
+}
+
 func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
-	store := t.TempDir()
+	storeRoot := t.TempDir()
 	hub := NewHub()
 	defer hub.Close()
 
-	srv := NewServer(store, 7337, hub, nil)
+	srv := NewServer(storeRoot, 7337, hub, nil)
 	h := srv.Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", rec.Code)
 	}
@@ -81,63 +124,26 @@ func TestServerServesEmbeddedAssetsAndThemes(t *testing.T) {
 		}
 	}
 
-	assetChecks := map[string][]string{
-		"/assets/app.css": {".sidebar-resizer", "--sidebar-width"},
-		"/assets/app.js":  {"initSidebarResize", "formatTreeFileLabel"},
-	}
-	for asset, markers := range assetChecks {
-		areq := httptest.NewRequest(http.MethodGet, asset, nil)
-		arec := httptest.NewRecorder()
-		h.ServeHTTP(arec, areq)
-		if arec.Code != http.StatusOK {
-			t.Fatalf("GET %s status = %d, want 200", asset, arec.Code)
-		}
-		assetBody := arec.Body.String()
-		for _, want := range markers {
-			if !strings.Contains(assetBody, want) {
-				t.Fatalf("%s missing %q", asset, want)
-			}
-		}
-	}
+	verifyEmbeddedAssets(t, h)
 
-	hreq := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	hreq := httptest.NewRequest(http.MethodGet, apiHealth, nil)
 	hrec := httptest.NewRecorder()
 	h.ServeHTTP(hrec, hreq)
 	if hrec.Code != http.StatusOK {
-		t.Fatalf("GET /api/health status = %d, want 200", hrec.Code)
+		t.Fatalf("GET %s status = %d, want 200", apiHealth, hrec.Code)
 	}
 	var health map[string]any
 	if err := json.Unmarshal(hrec.Body.Bytes(), &health); err != nil {
 		t.Fatalf("decode health: %v", err)
 	}
-	if health["status"] != "ok" || health["store_exists"] != true {
+	if health["status"] != "ok" || health["store_exists"] != true ||
+		health["app"] != appName || health["pid"] != float64(os.Getpid()) || health["version"] != "" {
 		t.Fatalf("unexpected health payload: %#v", health)
-	}
-	if health["app"] != "memoir-ui" || health["pid"] != float64(os.Getpid()) || health["version"] != "" {
-		t.Fatalf("health missing app/pid/version: %#v", health)
 	}
 }
 
-func TestServerTreeAndFileEndpoints(t *testing.T) {
-	storeRoot := t.TempDir()
-	wikiFile := filepath.Join(storeRoot, "repos", "github.com__acme__app", "wiki", "index.md")
-	decisionFile := filepath.Join(storeRoot, "repos", "github.com__acme__app", "wiki", "decisions", "use-go.md")
-	if err := os.MkdirAll(filepath.Dir(decisionFile), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(decisionFile, []byte("# Use Go\nType: decision\nUpdated: 2026-11-21\n"), 0o644); err != nil {
-		t.Fatalf("write decision: %v", err)
-	}
-	if err := os.WriteFile(wikiFile, []byte("# Wiki Index\nUpdated: 2026-11-21\n\n- [[decisions/use-go]]\n"), 0o644); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-
-	hub := NewHub()
-	defer hub.Close()
-	srv := NewServer(storeRoot, 7337, hub, nil)
-	h := srv.Handler()
-
-	// GET /api/tree
+func assertTreeHasOneRepo(t *testing.T, h http.Handler) {
+	t.Helper()
 	tReq := httptest.NewRequest(http.MethodGet, "/api/tree", nil)
 	tRec := httptest.NewRecorder()
 	h.ServeHTTP(tRec, tReq)
@@ -148,12 +154,13 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 	if err := json.Unmarshal(tRec.Body.Bytes(), &tree); err != nil {
 		t.Fatalf("decode tree: %v", err)
 	}
-	repos, ok := tree["repos"].([]any)
-	if !ok || len(repos) != 1 {
-		t.Fatalf("expected 1 repo in tree, got %#v", tree["repos"])
+	if repos, ok := tree[relDirRepos].([]any); !ok || len(repos) != 1 {
+		t.Fatalf("expected 1 repo in tree, got %#v", tree[relDirRepos])
 	}
+}
 
-	// GET /api/file valid
+func assertRenderedWikiAndBacklinks(t *testing.T, h http.Handler) {
+	t.Helper()
 	fReq := httptest.NewRequest(http.MethodGet, "/api/file?path=repos/github.com__acme__app/wiki/index.md", nil)
 	fRec := httptest.NewRecorder()
 	h.ServeHTTP(fRec, fReq)
@@ -171,12 +178,10 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 	if !strings.Contains(htmlBody, `class="wikilink"`) {
 		t.Fatalf("expected rendered wikilink in html, got %q", htmlBody)
 	}
-	badges, ok := fileResp["badges"].([]any)
-	if !ok || len(badges) == 0 {
+	if badges, ok := fileResp["badges"].([]any); !ok || len(badges) == 0 {
 		t.Fatalf("expected parsed header badges, got %#v", fileResp["badges"])
 	}
 
-	// Verify backlinks on target decision page.
 	dReq := httptest.NewRequest(http.MethodGet, "/api/file?path=repos/github.com__acme__app/wiki/decisions/use-go.md", nil)
 	dRec := httptest.NewRecorder()
 	h.ServeHTTP(dRec, dReq)
@@ -187,12 +192,25 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 	if err := json.Unmarshal(dRec.Body.Bytes(), &dResp); err != nil {
 		t.Fatalf("decode decision file: %v", err)
 	}
-	backlinks, ok := dResp["backlinks"].([]any)
-	if !ok || len(backlinks) != 1 {
+	if backlinks, ok := dResp["backlinks"].([]any); !ok || len(backlinks) != 1 {
 		t.Fatalf("expected 1 backlink from index.md, got %#v", dResp["backlinks"])
 	}
+}
 
-	// GET /api/file invalid traversal
+func TestServerTreeAndFileEndpoints(t *testing.T) {
+	storeRoot := t.TempDir()
+	wikiFile := filepath.Join(storeRoot, relDirRepos, testRepoID, "wiki", "index.md")
+	decisionFile := filepath.Join(storeRoot, relDirRepos, testRepoID, "wiki", "decisions", "use-go.md")
+	writeWebTestFile(t, decisionFile, "# Use Go\nType: decision\nUpdated: 2026-11-21\n")
+	writeWebTestFile(t, wikiFile, "# Wiki Index\nUpdated: 2026-11-21\n\n- [[decisions/use-go]]\n")
+
+	hub := NewHub()
+	defer hub.Close()
+	h := NewServer(storeRoot, 7337, hub, nil).Handler()
+
+	assertTreeHasOneRepo(t, h)
+	assertRenderedWikiAndBacklinks(t, h)
+
 	badReq := httptest.NewRequest(http.MethodGet, "/api/file?path=../etc/passwd", nil)
 	badRec := httptest.NewRecorder()
 	h.ServeHTTP(badRec, badReq)
@@ -200,7 +218,6 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 		t.Fatalf("GET /api/file traversal status = %d, want 400", badRec.Code)
 	}
 
-	// GET /api/file missing
 	missReq := httptest.NewRequest(http.MethodGet, "/api/file?path=repos/github.com__acme__app/wiki/missing.md", nil)
 	missRec := httptest.NewRecorder()
 	h.ServeHTTP(missRec, missReq)
@@ -210,11 +227,11 @@ func TestServerTreeAndFileEndpoints(t *testing.T) {
 }
 
 func TestServerSSEStreamAndClose(t *testing.T) {
-	store := t.TempDir()
+	storeRoot := t.TempDir()
 	hub := NewHub()
 	defer hub.Close()
 
-	srv := NewServer(store, 7337, hub, nil)
+	srv := NewServer(storeRoot, 7337, hub, nil)
 	pr, pw := io.Pipe()
 	defer func() { _ = pr.Close() }()
 
@@ -240,7 +257,7 @@ func TestServerSSEStreamAndClose(t *testing.T) {
 	}
 
 	hub.Broadcast(Event{
-		Type:      "change",
+		Type:      eventChange,
 		Op:        "write",
 		Path:      "repos/r1/wiki/index.md",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -263,20 +280,18 @@ func TestLocalhostGuardRejectsForeignOrigin(t *testing.T) {
 	hub := NewHub()
 	defer hub.Close()
 
-	srv := NewServer(t.TempDir(), 7337, hub, nil)
-	h := srv.Handler()
+	h := NewServer(t.TempDir(), 7337, hub, nil).Handler()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/health", nil)
-	req.Header.Set("Origin", "https://evil.example")
+	req := httptest.NewRequest(http.MethodPost, apiHealth, nil)
+	req.Header.Set(hdrOrigin, evilOriginURL)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("POST with foreign origin status = %d, want 403", rec.Code)
 	}
 
-	okReq := httptest.NewRequest(http.MethodPost, "/api/health", nil)
-	okReq.Header.Set("Origin", "http://127.0.0.1:7337")
+	okReq := httptest.NewRequest(http.MethodPost, apiHealth, nil)
+	okReq.Header.Set(hdrOrigin, "http://127.0.0.1:7337")
 	okRec := httptest.NewRecorder()
 	h.ServeHTTP(okRec, okReq)
 	if okRec.Code == http.StatusForbidden {
@@ -284,32 +299,51 @@ func TestLocalhostGuardRejectsForeignOrigin(t *testing.T) {
 	}
 }
 
-func TestServerSearchAndGCPruneEndpoints(t *testing.T) {
-	storeRoot := t.TempDir()
+func seedSearchAndGCStore(t *testing.T, storeRoot string) {
+	t.Helper()
 	healthyDir := t.TempDir()
 	missingDir := filepath.Join(t.TempDir(), "gone")
 
-	repoBase := filepath.Join(storeRoot, "repos", "github.com__acme__app")
-	if err := os.MkdirAll(filepath.Join(repoBase, "wiki"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(repoBase, "wiki", "index.md"), []byte("# App Wiki\nUpdated: 2026-11-21\n"), 0o644); err != nil {
-		t.Fatalf("write wiki: %v", err)
-	}
+	repoBase := filepath.Join(storeRoot, relDirRepos, testRepoID)
+	writeWebTestFile(t, filepath.Join(repoBase, "wiki", "index.md"), "# App Wiki\nUpdated: 2026-11-21\n")
 
 	healthyClone := filepath.Join(repoBase, "clones", "app--11111111")
-	if err := os.MkdirAll(filepath.Join(healthyClone, "paths", "_main", "active"), 0o755); err != nil {
-		t.Fatalf("mkdir healthy: %v", err)
-	}
-	_ = os.WriteFile(filepath.Join(healthyClone, "clone.json"), []byte(`{"root":"`+healthyDir+`"}`), 0o644)
-	_ = os.WriteFile(filepath.Join(healthyClone, "paths", "_main", "active", "decision-keep.md"), []byte("# Keep\nDecision: keep live\n"), 0o644)
+	writeWebTestFile(t, filepath.Join(healthyClone, "clone.json"), `{"root":"`+healthyDir+`"}`)
+	writeWebTestFile(t, filepath.Join(healthyClone, relDirPaths, relKeyMain, relDirActive, "decision-keep.md"), "# Keep\nDecision: keep live\n")
 
 	orphanClone := filepath.Join(repoBase, "clones", "old--22222222")
-	if err := os.MkdirAll(filepath.Join(orphanClone, "paths", "_main", "active"), 0o755); err != nil {
-		t.Fatalf("mkdir orphan: %v", err)
+	writeWebTestFile(t, filepath.Join(orphanClone, "clone.json"), `{"root":"`+missingDir+`"}`)
+	writeWebTestFile(t, filepath.Join(orphanClone, relDirPaths, relKeyMain, relDirActive, "decision-stale.md"), "# Stale\nDecision: remove stale token\n")
+}
+
+func verifyGCPruneGuards(t *testing.T, h http.Handler) {
+	t.Helper()
+	noConfirm := httptest.NewRequest(http.MethodPost, apiGCPrune, strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":false}`))
+	noConfirmRec := httptest.NewRecorder()
+	h.ServeHTTP(noConfirmRec, noConfirm)
+	if noConfirmRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without confirm=true, got %d", noConfirmRec.Code)
 	}
-	_ = os.WriteFile(filepath.Join(orphanClone, "clone.json"), []byte(`{"root":"`+missingDir+`"}`), 0o644)
-	_ = os.WriteFile(filepath.Join(orphanClone, "paths", "_main", "active", "decision-stale.md"), []byte("# Stale\nDecision: remove stale token\n"), 0o644)
+
+	foreign := httptest.NewRequest(http.MethodPost, apiGCPrune, strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":true}`))
+	foreign.Header.Set(hdrOrigin, evilOriginURL)
+	foreignRec := httptest.NewRecorder()
+	h.ServeHTTP(foreignRec, foreign)
+	if foreignRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for foreign origin, got %d", foreignRec.Code)
+	}
+
+	healthyReq := httptest.NewRequest(http.MethodPost, apiGCPrune, strings.NewReader(`{"path":"repos/github.com__acme__app/clones/app--11111111","confirm":true}`))
+	healthyRec := httptest.NewRecorder()
+	h.ServeHTTP(healthyRec, healthyReq)
+	if healthyRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for healthy clone, got %d", healthyRec.Code)
+	}
+}
+
+func TestServerSearchAndGCPruneEndpoints(t *testing.T) {
+	storeRoot := t.TempDir()
+	seedSearchAndGCStore(t, storeRoot)
 
 	idx := store.NewSearchIndex(storeRoot)
 	if err := idx.Rebuild(); err != nil {
@@ -318,10 +352,8 @@ func TestServerSearchAndGCPruneEndpoints(t *testing.T) {
 
 	hub := NewHub()
 	defer hub.Close()
-	srv := NewServer(storeRoot, 7337, hub, idx)
-	h := srv.Handler()
+	h := NewServer(storeRoot, 7337, hub, idx).Handler()
 
-	// Search query with scope & type filters.
 	sReq := httptest.NewRequest(http.MethodGet, "/api/search?q=stale&scope=repo&type=decision", nil)
 	sRec := httptest.NewRecorder()
 	h.ServeHTTP(sRec, sReq)
@@ -334,7 +366,6 @@ func TestServerSearchAndGCPruneEndpoints(t *testing.T) {
 		t.Fatalf("expected 1 search result, got %#v", sResp)
 	}
 
-	// GET /api/gc lists only the orphan clone.
 	gReq := httptest.NewRequest(http.MethodGet, "/api/gc", nil)
 	gRec := httptest.NewRecorder()
 	h.ServeHTTP(gRec, gReq)
@@ -349,41 +380,16 @@ func TestServerSearchAndGCPruneEndpoints(t *testing.T) {
 		t.Fatalf("unexpected orphans: %+v", gResp.Orphans)
 	}
 
-	// POST /api/gc/prune requires confirm=true.
-	noConfirm := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":false}`))
-	noConfirmRec := httptest.NewRecorder()
-	h.ServeHTTP(noConfirmRec, noConfirm)
-	if noConfirmRec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 without confirm=true, got %d", noConfirmRec.Code)
-	}
+	verifyGCPruneGuards(t, h)
 
-	// POST /api/gc/prune blocks foreign Origin.
-	foreign := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":true}`))
-	foreign.Header.Set("Origin", "https://evil.example")
-	foreignRec := httptest.NewRecorder()
-	h.ServeHTTP(foreignRec, foreign)
-	if foreignRec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for foreign origin, got %d", foreignRec.Code)
-	}
-
-	// POST /api/gc/prune rejects healthy clone with 409 Conflict.
-	healthyReq := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/app--11111111","confirm":true}`))
-	healthyRec := httptest.NewRecorder()
-	h.ServeHTTP(healthyRec, healthyReq)
-	if healthyRec.Code != http.StatusConflict {
-		t.Fatalf("expected 409 for healthy clone, got %d", healthyRec.Code)
-	}
-
-	// Valid confirmed prune deletes orphan and refreshes search index.
-	okReq := httptest.NewRequest(http.MethodPost, "/api/gc/prune", strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":true}`))
-	okReq.Header.Set("Origin", "http://127.0.0.1:7337")
+	okReq := httptest.NewRequest(http.MethodPost, apiGCPrune, strings.NewReader(`{"path":"repos/github.com__acme__app/clones/old--22222222","confirm":true}`))
+	okReq.Header.Set(hdrOrigin, "http://127.0.0.1:7337")
 	okRec := httptest.NewRecorder()
 	h.ServeHTTP(okRec, okReq)
 	if okRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on valid prune, got %d (%s)", okRec.Code, okRec.Body.String())
 	}
 
-	// Search index should no longer return pruned clone's decision.
 	afterReq := httptest.NewRequest(http.MethodGet, "/api/search?q=stale", nil)
 	afterRec := httptest.NewRecorder()
 	h.ServeHTTP(afterRec, afterReq)

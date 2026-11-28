@@ -54,6 +54,82 @@ func NewSearchIndex(storeRoot string) *SearchIndex {
 	}
 }
 
+func buildIndexedDoc(
+	storeRoot, defaultScope, filePath, name string,
+	members map[string]groupMember,
+) (indexedDoc, bool) {
+	rel, err := filepath.Rel(storeRoot, filePath)
+	if err != nil {
+		return indexedDoc{}, false
+	}
+	relSlash := filepath.ToSlash(rel)
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return indexedDoc{}, false
+	}
+
+	parts := strings.Split(relSlash, "/")
+	scopeID := ""
+	if len(parts) >= 2 {
+		scopeID = parts[1]
+	}
+	scope, scopeLabel := defaultScope, scopeID
+	if defaultScope == scopeRepo {
+		scopeLabel = strings.ReplaceAll(scopeID, "__", "/")
+	}
+	// A pinned group's member fragments live in standalone/ but search under the group.
+	if m, ok := members[scopeID]; ok && defaultScope == dirStandalone {
+		scope, scopeID, scopeLabel = dirPinned, m.Slug, m.Slug
+	}
+
+	body := string(raw)
+	title := extractTitleFromString(body, name)
+	kind, archived := ClassifyFile(relSlash)
+
+	return indexedDoc{
+		Path:       relSlash,
+		Name:       name,
+		Title:      title,
+		Scope:      scope,
+		ScopeID:    scopeID,
+		ScopeLabel: scopeLabel,
+		Type:       kind,
+		Archived:   archived,
+		Body:       body,
+		titleLower: strings.ToLower(title),
+		pathLower:  strings.ToLower(relSlash),
+		bodyLower:  strings.ToLower(body),
+	}, true
+}
+
+func indexScopeDirectory(storeRoot, dir, defaultScope string, members map[string]groupMember) []indexedDoc {
+	scopeDir := filepath.Join(storeRoot, dir)
+	if _, err := os.Stat(scopeDir); err != nil {
+		return nil
+	}
+	var docs []indexedDoc
+	_ = filepath.WalkDir(scopeDir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || !strings.HasSuffix(name, extMD) {
+			return nil
+		}
+		if doc, ok := buildIndexedDoc(storeRoot, defaultScope, p, name, members); ok {
+			docs = append(docs, doc)
+		}
+		return nil
+	})
+	return docs
+}
+
 // Rebuild rescans repos/, pinned/, and standalone/ and atomically swaps the indexed corpus.
 func (idx *SearchIndex) Rebuild() error {
 	info, err := os.Stat(idx.storeRoot)
@@ -76,72 +152,11 @@ func (idx *SearchIndex) Rebuild() error {
 		dir   string
 		scope string
 	}{
-		{dir: "repos", scope: "repo"},
-		{dir: "pinned", scope: "pinned"},
-		{dir: "standalone", scope: "standalone"},
+		{dir: dirRepos, scope: scopeRepo},
+		{dir: dirPinned, scope: dirPinned},
+		{dir: dirStandalone, scope: dirStandalone},
 	} {
-		scopeDir := filepath.Join(idx.storeRoot, spec.dir)
-		if _, err := os.Stat(scopeDir); err != nil {
-			continue
-		}
-		_ = filepath.WalkDir(scopeDir, func(p string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			name := d.Name()
-			if strings.HasPrefix(name, ".") {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if d.IsDir() || !strings.HasSuffix(name, ".md") {
-				return nil
-			}
-			rel, err := filepath.Rel(idx.storeRoot, p)
-			if err != nil {
-				return nil
-			}
-			relSlash := filepath.ToSlash(rel)
-			raw, err := os.ReadFile(p)
-			if err != nil {
-				return nil
-			}
-
-			parts := strings.Split(relSlash, "/")
-			scopeID := ""
-			if len(parts) >= 2 {
-				scopeID = parts[1]
-			}
-			scope, scopeLabel := spec.scope, scopeID
-			if spec.scope == "repo" {
-				scopeLabel = strings.ReplaceAll(scopeID, "__", "/")
-			}
-			// A pinned group's member fragments live in standalone/ but search under the group.
-			if m, ok := members[scopeID]; ok && spec.scope == "standalone" {
-				scope, scopeID, scopeLabel = "pinned", m.Slug, m.Slug
-			}
-
-			body := string(raw)
-			title := extractTitleFromString(body, name)
-			kind, archived := ClassifyFile(relSlash)
-
-			next = append(next, indexedDoc{
-				Path:       relSlash,
-				Name:       name,
-				Title:      title,
-				Scope:      scope,
-				ScopeID:    scopeID,
-				ScopeLabel: scopeLabel,
-				Type:       kind,
-				Archived:   archived,
-				Body:       body,
-				titleLower: strings.ToLower(title),
-				pathLower:  strings.ToLower(relSlash),
-				bodyLower:  strings.ToLower(body),
-			})
-			return nil
-		})
+		next = append(next, indexScopeDirectory(idx.storeRoot, spec.dir, spec.scope, members)...)
 	}
 
 	sort.Slice(next, func(i, j int) bool {
@@ -154,15 +169,47 @@ func (idx *SearchIndex) Rebuild() error {
 	return nil
 }
 
-// Query filters and ranks indexed documents matching q, scopeFilter, and typeFilter.
-func (idx *SearchIndex) Query(q, scopeFilter, typeFilter string, limit int) []SearchResult {
+func clampSearchLimit(limit int) int {
 	if limit <= 0 {
-		limit = 50
+		return 50
 	}
 	if limit > 200 {
-		limit = 200
+		return 200
 	}
+	return limit
+}
 
+func scoreSearchDoc(doc indexedDoc, tokens []string) (int, bool) {
+	score := 0
+	for _, tok := range tokens {
+		inTitle := strings.Contains(doc.titleLower, tok)
+		inPath := strings.Contains(doc.pathLower, tok)
+		inBody := strings.Contains(doc.bodyLower, tok)
+		if !inTitle && !inPath && !inBody {
+			return 0, false
+		}
+		if inTitle {
+			score += 30
+		}
+		if inPath {
+			score += 15
+		}
+		if inBody {
+			score += 5
+		}
+	}
+	if !doc.Archived {
+		score += 8
+	}
+	if doc.Type == dirWiki || doc.Type == "decision" {
+		score += 4
+	}
+	return score, true
+}
+
+// Query filters and ranks indexed documents matching q, scopeFilter, and typeFilter.
+func (idx *SearchIndex) Query(q, scopeFilter, typeFilter string, limit int) []SearchResult {
+	limit = clampSearchLimit(limit)
 	sf := normalizeScopeFilter(scopeFilter)
 	tf := normalizeTypeFilter(typeFilter)
 	tokens := strings.Fields(strings.ToLower(strings.TrimSpace(q)))
@@ -173,44 +220,13 @@ func (idx *SearchIndex) Query(q, scopeFilter, typeFilter string, limit int) []Se
 
 	results := make([]SearchResult, 0)
 	for _, doc := range docs {
-		if sf != "" && doc.Scope != sf {
+		if (sf != "" && doc.Scope != sf) || (tf != "" && doc.Type != tf) {
 			continue
 		}
-		if tf != "" && doc.Type != tf {
+		score, ok := scoreSearchDoc(doc, tokens)
+		if !ok {
 			continue
 		}
-
-		score := 0
-		matched := true
-		for _, tok := range tokens {
-			inTitle := strings.Contains(doc.titleLower, tok)
-			inPath := strings.Contains(doc.pathLower, tok)
-			inBody := strings.Contains(doc.bodyLower, tok)
-			if !inTitle && !inPath && !inBody {
-				matched = false
-				break
-			}
-			if inTitle {
-				score += 30
-			}
-			if inPath {
-				score += 15
-			}
-			if inBody {
-				score += 5
-			}
-		}
-		if !matched {
-			continue
-		}
-
-		if !doc.Archived {
-			score += 8
-		}
-		if doc.Type == "wiki" || doc.Type == "decision" {
-			score += 4
-		}
-
 		results = append(results, SearchResult{
 			Path:       doc.Path,
 			Name:       doc.Name,
@@ -245,12 +261,12 @@ func normalizeScopeFilter(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "all":
 		return ""
-	case "repo", "repos":
-		return "repo"
-	case "pinned":
-		return "pinned"
-	case "standalone":
-		return "standalone"
+	case scopeRepo, dirRepos:
+		return scopeRepo
+	case dirPinned:
+		return dirPinned
+	case dirStandalone:
+		return dirStandalone
 	default:
 		return strings.ToLower(strings.TrimSpace(s))
 	}
@@ -275,7 +291,7 @@ func extractTitleFromString(body, filename string) string {
 			}
 		}
 	}
-	return strings.TrimSuffix(filename, ".md")
+	return strings.TrimSuffix(filename, extMD)
 }
 
 func buildSnippet(body string, tokens []string) string {
@@ -283,8 +299,6 @@ func buildSnippet(body string, tokens []string) string {
 	if flat == "" {
 		return ""
 	}
-
-	const maxBytes = 150
 	if len(tokens) == 0 {
 		return sliceRunes(flat, 0, 140)
 	}
@@ -306,9 +320,7 @@ func buildSnippet(body string, tokens []string) string {
 	if startRune < 0 {
 		startRune = 0
 	}
-	snippet := sliceRunesWindow(flat, startRune, 140)
-	_ = maxBytes
-	return snippet
+	return sliceRunesWindow(flat, startRune, 140)
 }
 
 func sliceRunes(s string, start, length int) string {

@@ -1,3 +1,4 @@
+// Package main implements the memoir-ui local web dashboard and CLI.
 package main
 
 import (
@@ -24,6 +25,8 @@ import (
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/store"
 	"github.com/BaankeyBihari/memoir-skill/dashboard/internal/web"
 )
+
+const appName = "memoir-ui"
 
 var version = "dev"
 
@@ -70,7 +73,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "memoir-ui:", err)
+		fmt.Fprintln(os.Stderr, appName+":", err)
 		os.Exit(1)
 	}
 }
@@ -81,65 +84,10 @@ func newFlags(name string) (*flag.FlagSet, *int) {
 	return fs, fs.Int("port", 7337, "HTTP listen port")
 }
 
-func serve(args []string) {
-	fs, port := newFlags("memoir-ui")
-	storeFlag := fs.String("store", "", "Memoir store root (defaults to $MEMOIR_STORE or ~/.memoir)")
-	openFlag := fs.Bool("open", false, "Open the dashboard in the default browser")
-	versionFlag := fs.Bool("version", false, "Print version and exit")
-	_ = fs.Parse(args)
-
-	if *versionFlag {
-		fmt.Println(version)
-		return
-	}
-
-	if *port < 1 || *port > 65535 {
-		log.Fatalf("invalid --port %d: must be between 1 and 65535", *port)
-	}
-
-	storeRoot, err := resolveStoreRoot(*storeFlag)
-	if err != nil {
-		log.Fatalf("resolve store root: %v", err)
-	}
-
-	addr := fmt.Sprintf("127.0.0.1:%d", *port)
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("listen %s: %v", addr, err)
-	}
-
-	searchIdx := store.NewSearchIndex(storeRoot)
-	if err := searchIdx.Rebuild(); err != nil {
-		log.Printf("memoir-ui: initial search index build: %v", err)
-	}
-
-	hub := web.NewHub()
-	watcher, err := web.NewWatcher(storeRoot, hub, 100*time.Millisecond, func(web.Event) {
-		if err := searchIdx.Rebuild(); err != nil {
-			log.Printf("memoir-ui: search reindex error: %v", err)
-		}
-	})
-	if err != nil {
-		log.Fatalf("init watcher: %v", err)
-	}
-
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-
-	go watcher.Start(ctx)
-
-	srv := web.NewServer(storeRoot, *port, hub, searchIdx)
-	srv.Version = version
+func runHTTPServer(ctx context.Context, ln net.Listener, srv *web.Server, hub *web.Hub) error {
 	httpServer := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	url := fmt.Sprintf("http://%s", addr)
-	log.Printf("memoir-ui listening on %s (store: %s)", url, storeRoot)
-
-	if *openFlag {
-		go openBrowser(url)
 	}
 
 	errCh := make(chan error, 1)
@@ -152,15 +100,73 @@ func serve(args []string) {
 
 	select {
 	case err := <-errCh:
-		if err != nil {
-			log.Fatalf("server error: %v", err)
-		}
+		return err
 	case <-ctx.Done():
-		log.Printf("memoir-ui shutting down")
+		log.Printf("%s shutting down", appName)
 		hub.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
+		return nil
+	}
+}
+
+func serve(args []string) {
+	fs, port := newFlags(appName)
+	storeFlag := fs.String("store", "", "Memoir store root (defaults to $MEMOIR_STORE or ~/.memoir)")
+	openFlag := fs.Bool("open", false, "Open the dashboard in the default browser")
+	versionFlag := fs.Bool("version", false, "Print version and exit")
+	_ = fs.Parse(args)
+
+	if *versionFlag {
+		fmt.Println(version)
+		return
+	}
+	if *port < 1 || *port > 65535 {
+		log.Fatalf("invalid --port %d: must be between 1 and 65535", *port)
+	}
+
+	storeRoot, err := resolveStoreRoot(*storeFlag)
+	if err != nil {
+		log.Fatalf("resolve store root: %v", err)
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", *port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen %s: %v", addr, err)
+	}
+
+	searchIdx := store.NewSearchIndex(storeRoot)
+	if err := searchIdx.Rebuild(); err != nil {
+		log.Printf("%s: initial search index build: %v", appName, err)
+	}
+
+	hub := web.NewHub()
+	watcher, err := web.NewWatcher(storeRoot, hub, 100*time.Millisecond, func(web.Event) {
+		if err := searchIdx.Rebuild(); err != nil {
+			log.Printf("%s: search reindex error: %v", appName, err)
+		}
+	})
+	if err != nil {
+		log.Fatalf("init watcher: %v", err)
+	}
+
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go watcher.Start(ctx)
+
+	srv := web.NewServer(storeRoot, *port, hub, searchIdx)
+	srv.Version = version
+
+	url := fmt.Sprintf("http://%s", addr)
+	log.Printf("%s listening on %s (store: %s)", appName, url, storeRoot)
+	if *openFlag {
+		go openBrowser(url)
+	}
+
+	serveErr := runHTTPServer(ctx, ln, srv, hub)
+	stopSignals()
+	if serveErr != nil {
+		log.Fatalf("server error: %v", serveErr)
 	}
 }
 
@@ -205,7 +211,7 @@ func probe(port int) (health, bool) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var h health
-	if json.NewDecoder(resp.Body).Decode(&h) != nil || h.App != "memoir-ui" || h.PID <= 0 {
+	if json.NewDecoder(resp.Body).Decode(&h) != nil || h.App != appName || h.PID <= 0 {
 		return health{}, false
 	}
 	return h, true
@@ -221,6 +227,48 @@ func waitFor(port int, want bool) (health, bool) {
 	}
 }
 
+func startBackgroundServer(port int, addr, storePath string) (health, string, error) {
+	if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		_ = conn.Close()
+		return health{}, "", fmt.Errorf("port %d is in use by another program (maybe an older memoir-ui); stop it or pass --port <other>", port)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return health{}, "", err
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return health{}, "", err
+	}
+	logPath := filepath.Join(cache, appName, "memoir-ui.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
+		return health{}, "", err
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return health{}, "", err
+	}
+	defer func() { _ = logFile.Close() }()
+
+	serveArgs := []string{"--port", strconv.Itoa(port)}
+	if storePath != "" {
+		serveArgs = append(serveArgs, "--store", storePath)
+	}
+	cmd := exec.Command(exe, serveArgs...)
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // outlive this terminal
+	if err := cmd.Start(); err != nil {
+		return health{}, "", err
+	}
+	_ = cmd.Process.Release()
+
+	h, ok := waitFor(port, true)
+	if !ok {
+		return health{}, "", fmt.Errorf("memoir-ui did not start on port %d within 5s; see %s", port, logPath)
+	}
+	return h, logPath, nil
+}
+
 func dashboard(args []string) error {
 	fs, port := newFlags("dashboard")
 	storeFlag := fs.String("store", "", "Memoir store root (defaults to $MEMOIR_STORE or ~/.memoir)")
@@ -228,47 +276,16 @@ func dashboard(args []string) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	url := "http://" + addr
 
-	h, ok := probe(*port)
-	if ok {
+	if h, ok := probe(*port); ok {
 		fmt.Printf("already running %s pid=%d\n", url, h.PID)
-	} else {
-		if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
-			_ = conn.Close()
-			return fmt.Errorf("port %d is in use by another program (maybe an older memoir-ui); stop it or pass --port <other>", *port)
-		}
-		exe, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return err
-		}
-		logPath := filepath.Join(cache, "memoir-ui", "memoir-ui.log")
-		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-			return err
-		}
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = logFile.Close() }()
-		serveArgs := []string{"--port", strconv.Itoa(*port)}
-		if *storeFlag != "" {
-			serveArgs = append(serveArgs, "--store", *storeFlag)
-		}
-		cmd := exec.Command(exe, serveArgs...)
-		cmd.Stdout, cmd.Stderr = logFile, logFile
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // outlive this terminal
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		_ = cmd.Process.Release()
-		if h, ok = waitFor(*port, true); !ok {
-			return fmt.Errorf("memoir-ui did not start on port %d within 5s; see %s", *port, logPath)
-		}
-		fmt.Printf("started %s pid=%d log=%s\n", url, h.PID, logPath)
+		openBrowser(url)
+		return nil
 	}
+	h, logPath, err := startBackgroundServer(*port, addr, *storeFlag)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("started %s pid=%d log=%s\n", url, h.PID, logPath)
 	openBrowser(url)
 	return nil
 }
@@ -344,7 +361,7 @@ func checkUpdate(out io.Writer) error {
 		return fmt.Errorf("check latest release: unexpected response (HTTP %d)", resp.StatusCode)
 	}
 
-	installed := [][2]string{{"memoir-ui", version}}
+	installed := [][2]string{{appName, version}}
 	home, _ := os.UserHomeDir()
 	for _, skill := range []string{"memoir", "memoir-wiki"} {
 		data, _ := os.ReadFile(filepath.Join(home, ".agents", "skills", skill, "VERSION"))

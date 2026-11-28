@@ -31,7 +31,7 @@ func TestWatcherDetectsFileAndDynamicSubdir(t *testing.T) {
 
 	// 1. Direct file creation.
 	firstFile := filepath.Join(store, "pinned.json")
-	if err := os.WriteFile(firstFile, []byte("[]\n"), 0o644); err != nil {
+	if err := os.WriteFile(firstFile, []byte("[]\n"), 0o600); err != nil {
 		t.Fatalf("write pinned.json: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func TestWatcherDetectsFileAndDynamicSubdir(t *testing.T) {
 
 	// 2. Dynamically created nested subdirectory should be watched automatically.
 	nestedDir := filepath.Join(store, "repos", "r1", "wiki", "decisions")
-	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+	if err := os.MkdirAll(nestedDir, 0o750); err != nil {
 		t.Fatalf("mkdir nested: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestWatcherDetectsFileAndDynamicSubdir(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	nestedFile := filepath.Join(nestedDir, "store-location.md")
-	if err := os.WriteFile(nestedFile, []byte("# Store Location\n"), 0o644); err != nil {
+	if err := os.WriteFile(nestedFile, []byte("# Store Location\n"), 0o600); err != nil {
 		t.Fatalf("write nested md: %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestWatcherDebouncesRapidWrites(t *testing.T) {
 
 	var count atomic.Int32
 	fired := make(chan struct{}, 16)
-	w, err := NewWatcher(store, hub, 250*time.Millisecond, func(ev Event) {
+	w, err := NewWatcher(store, hub, 250*time.Millisecond, func(_ Event) {
 		count.Add(1)
 		select {
 		case fired <- struct{}{}:
@@ -89,7 +89,7 @@ func TestWatcherDebouncesRapidWrites(t *testing.T) {
 
 	target := filepath.Join(store, "notes.md")
 	for i := 0; i < 8; i++ {
-		if err := os.WriteFile(target, []byte("update\n"), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte("update\n"), 0o600); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
