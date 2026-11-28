@@ -2,6 +2,7 @@
 .agents/
 .pytest_cache/
 .ruff_cache/
+.nox/
 .venv/
 dist/
 memoir-workspace/

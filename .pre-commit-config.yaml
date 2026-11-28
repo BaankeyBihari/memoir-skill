@@ -25,7 +25,7 @@ repos:
         name: ruff
         entry: ruff check
         language: system
-        files: ^(skills/memoir/scripts/memoir\.py|test_memoir\.py|scripts/test_install\.py)$
+        files: ^(skills/memoir/scripts/memoir\.py|test_memoir\.py|scripts/test_install\.py|noxfile\.py)$
       - id: shellcheck
         name: shellcheck
         entry: mise run lint:shell
@@ -37,7 +37,7 @@ repos:
         entry: markdownlint-cli2
         language: system
         files: \.md$
-        exclude: ^(\.claude/|\.agents/|\.pytest_cache/|\.venv/|dist/|evals/fixtures/|memoir-workspace/|node_modules/)
+        exclude: ^(\.claude/|\.agents/|\.pytest_cache/|\.nox/|\.venv/|dist/|evals/fixtures/|memoir-workspace/|node_modules/)
       - id: typos
         name: typos
         entry: typos
