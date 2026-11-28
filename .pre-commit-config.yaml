@@ -25,7 +25,8 @@ repos:
         name: ruff
         entry: ruff check
         language: system
-        files: ^(skills/memoir/scripts/memoir\.py|test_memoir\.py|scripts/test_install\.py|noxfile\.py)$
+        files: \.py$
+        exclude: ^(\.claude/|\.agents/|\.pytest_cache/|\.nox/|\.venv/|dist/|evals/fixtures/|memoir-workspace/|node_modules/)
       - id: shellcheck
         name: shellcheck
         entry: mise run lint:shell

@@ -1,6 +1,7 @@
 """On-demand Python 3.11+ compatibility matrix. Run: mise run test:compat"""
 
 import re
+import shutil
 import subprocess
 
 import nox
@@ -13,9 +14,12 @@ FALLBACK_PYTHONS = ["3.11", "3.12", "3.13", "3.14", "3.15"]
 
 
 def discover_python_versions() -> list[str]:
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        return FALLBACK_PYTHONS
     try:
         out = subprocess.run(
-            ["uv", "python", "list"],
+            [uv_bin, "python", "list"],
             capture_output=True,
             text=True,
             check=True,
