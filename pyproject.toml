@@ -18,12 +18,14 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["test_memoir.py", "scripts"]
+addopts = ["--import-mode=importlib"]
+testpaths = ["test_memoir.py", "skills/memoir/tests", "scripts"]
 python_files = ["test_*.py"]
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["memoir-workspace"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "DTZ", "PLW"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "DTZ", "PLW", "C901"]
 ignore = ["E501"]

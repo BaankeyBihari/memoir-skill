@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -9,6 +10,9 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/memoir.py"
+UTF8 = "utf-8"
+FLAG_PRUNE = "--prune"
+GIT = shutil.which("git") or "git"
 
 
 @pytest.fixture
@@ -25,8 +29,12 @@ def cli(cwd, *args):
 
 
 def git(cwd, *args):
-    subprocess.run(["git", "-c", "user.email=test@example.org", "-c", "user.name=Test", *args],
-                   cwd=cwd, check=True, capture_output=True)
+    subprocess.run(
+        [GIT, "-c", "user.email=test@example.org", "-c", "user.name=Test", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
 
 
 def sha8(path):
@@ -37,8 +45,10 @@ def test_clones_and_worktrees(tmp_path, store):
     origin = tmp_path / "origin"
     git(tmp_path, "init", str(origin))
     git(origin, "commit", "--allow-empty", "-m", "seed")
-    for parent, remote in [("work", "git@EXAMPLE.org:Team/Repo.git"),
-                           ("scratch", "https://user:secret@example.org/team/repo.git")]:
+    for parent, remote in [
+        ("work", "git@EXAMPLE.org:Team/Repo.git"),
+        ("scratch", "https://user:secret@example.org/team/repo.git"),
+    ]:
         dest = tmp_path / parent / "My Clone"
         git(tmp_path, "clone", str(origin), str(dest))
         git(dest, "remote", "set-url", "origin", remote)
@@ -47,11 +57,13 @@ def test_clones_and_worktrees(tmp_path, store):
         assert cli(dest, "path") == str(clone / "paths/_main")
         assert not clone.exists()
         cli(dest, "init")
-        metadata = json.loads((clone / "clone.json").read_text())
+        metadata = json.loads((clone / "clone.json").read_text(encoding=UTF8))
         assert metadata["root"] == str(dest.resolve())
         assert datetime.fromisoformat(metadata["last_seen"]).tzinfo
-        for checkout, key in [(dest / "Worktrees/wt-one", "Worktrees__wt-one"),
-                              (dest.parent / "wt-two", "wt-two")]:
+        for checkout, key in [
+            (dest / "Worktrees/wt-one", "Worktrees__wt-one"),
+            (dest.parent / "wt-two", "wt-two"),
+        ]:
             git(dest, "worktree", "add", "--detach", str(checkout))
             sub = checkout / "nested"
             sub.mkdir()
@@ -76,21 +88,25 @@ def test_pin_resolution(tmp_path, store):
     sibling.mkdir()
     workspace = store / "pinned" / ("my-notes--" + sha8(root))
     standalone = store / "standalone" / ("my-notes-archive--" + sha8(sibling))
+    standalone_root = store / "standalone" / ("my-notes--" + sha8(root))
+    standalone_child = store / "standalone" / ("2026--" + sha8(child))
     assert cli(sibling, "path") == str(standalone)
     for path in (root, alias):
         assert str(workspace) in cli(tmp_path, "pin", path)
-    assert json.loads((store / "pinned.json").read_text()) == [str(root.resolve())]
-    assert cli(root, "path") == str(workspace / "paths/_root")
+    assert json.loads((store / "pinned.json").read_text(encoding=UTF8)) == [str(root.resolve())]
+    assert cli(root, "path") == str(standalone_root)
     cli(child, "init")
-    assert (workspace / "paths/drafts__2026/archive").is_dir()
-    assert json.loads((workspace / "workspace.json").read_text())["root"] == str(root.resolve())
+    assert (standalone_child / "archive").is_dir()
+    assert json.loads((workspace / "workspace.json").read_text(encoding=UTF8))["root"] == str(root.resolve())
+    assert cli(child, "scope").splitlines() == [str(workspace), str(standalone_child)]
     cli(nested, "pin")
     inner = store / "pinned" / ("drafts--" + sha8(nested))
-    assert cli(child, "path") == str(inner / "paths/2026")
+    assert cli(child, "scope").splitlines() == [str(inner), str(standalone_child)]
     cli(nested, "unpin")
     cli(nested, "unpin")
-    assert cli(child, "path") == str(workspace / "paths/drafts__2026")
+    assert cli(child, "scope").splitlines() == [str(workspace), str(standalone_child)]
     assert cli(sibling, "path") == str(standalone)
+    assert cli(sibling, "scope") == ""
     git(child, "init")
     assert Path(cli(child, "path")).is_relative_to(store / "repos")
     cli(root, "unpin")
@@ -115,29 +131,34 @@ def test_gc(tmp_path, store):
     gone.rename(tmp_path / "moved")
     standalone = Path(cli(tmp_path, "path"))
     cli(tmp_path, "init")
-    for flags in [(), ("--dry-run",), ("--prune",)]:
-        assert clone.exists() and workspace.exists()
+    for flags in [(), ("--dry-run",), (FLAG_PRUNE,)]:
+        assert clone.exists()
+        assert workspace.exists()
         out = cli(tmp_path, "gc", *flags)
-        assert str(clone) in out and str(workspace) in out
+        assert str(clone) in out
+        assert str(workspace) in out
         assert str(live_scope) not in out
-    assert not clone.exists() and not workspace.exists()
-    assert wiki.is_dir() and standalone.is_dir() and live_scope.is_dir()
-    assert cli(tmp_path, "gc", "--prune") == ""
+    assert not clone.exists()
+    assert not workspace.exists()
+    assert wiki.is_dir()
+    assert standalone.is_dir()
+    assert live_scope.is_dir()
+    assert cli(tmp_path, "gc", FLAG_PRUNE) == ""
 
 
 def test_gc_leaves_linked_and_invalid_metadata(tmp_path, store):
     outside = tmp_path / "outside"
     record = outside / "clones/scope/clone.json"
     record.parent.mkdir(parents=True)
-    record.write_text(json.dumps({"root": str(tmp_path / "missing")}))
+    record.write_text(json.dumps({"root": str(tmp_path / "missing")}), encoding=UTF8)
     repos = store / "repos"
     repos.mkdir(parents=True)
     (repos / "linked").symlink_to(outside)
-    cli(tmp_path, "gc", "--prune")
+    cli(tmp_path, "gc", FLAG_PRUNE)
     assert record.is_file()
     invalid = store / "pinned/bad/workspace.json"
     invalid.parent.mkdir(parents=True)
-    invalid.write_text('{"root": ""}')
+    invalid.write_text('{"root": ""}', encoding=UTF8)
     with pytest.raises(subprocess.CalledProcessError):
-        cli(tmp_path, "gc", "--prune")
+        cli(tmp_path, "gc", FLAG_PRUNE)
     assert invalid.is_file()

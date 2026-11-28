@@ -39,8 +39,8 @@ description = "Run gofmt, go vet, and golangci-lint on dashboard/"
 run = 'test -z "$(gofmt -l dashboard)" && (cd dashboard && go vet ./... && golangci-lint run ./...)'
 
 [tasks."lint:py"]
-description = "Run ruff check on Python CLI and test scripts"
-run = "ruff check skills/memoir/scripts/memoir.py test_memoir.py scripts/test_install.py noxfile.py"
+description = "Run ruff check on Python files"
+run = "ruff check ."
 
 [tasks."lint:shell"]
 description = "Run bash syntax check and shellcheck on scripts/*.sh"

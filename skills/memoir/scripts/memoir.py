@@ -19,9 +19,18 @@ import stat
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
+
+UTF8 = "utf-8"
+UTF8_SIG = "utf-8-sig"
+GIT_REV_PARSE = "rev-parse"
+FLAG_SHOW_TOPLEVEL = "--show-toplevel"
+HDR_SUPERSEDES = "Supersedes:"
+STATE_FILENAME = "state-current.md"
+AGENTS_MD = "AGENTS.md"
+CLAUDE_MD = "CLAUDE.md"
 
 ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
 SUPERSEDED_RE = re.compile(r"decision-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
@@ -37,9 +46,12 @@ def scope_id(root: Path, identity: Path) -> str:
 
 
 def git_output(*args: str) -> str:
+    git_bin = shutil.which("git")
+    if not git_bin:
+        return ""
     try:
-        return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).rstrip("\n")
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        return subprocess.check_output([git_bin, *args], text=True, stderr=subprocess.DEVNULL).rstrip("\n")
+    except (subprocess.CalledProcessError, OSError):
         return ""
 
 
@@ -62,13 +74,13 @@ def remote_id(remote: str, main_root: Path) -> str:
 
 def record_scope(record: Path, root: Path) -> None:
     record.parent.mkdir(parents=True, exist_ok=True)
-    data = {"root": str(root), "last_seen": datetime.now(timezone.utc).isoformat()}
+    data = {"root": str(root), "last_seen": datetime.now(UTC).isoformat()}
     atomic_write(record, json.dumps(data) + "\n")
 
 
 def pinned_roots(store: Path) -> list[Path]:
     try:
-        pins = json.loads((store / "pinned.json").read_text(encoding="utf-8"))
+        pins = json.loads((store / "pinned.json").read_text(encoding=UTF8))
     except FileNotFoundError:
         return []
     if not isinstance(pins, list) or not all(isinstance(p, str) and Path(p).is_absolute() for p in pins):
@@ -114,7 +126,7 @@ def members_of(store: Path, base_dir: Path) -> list[Path]:
     members = {base_dir}
     for record in (store / "standalone").glob("*/scope.json"):
         try:
-            folder = Path(json.loads(record.read_text(encoding="utf-8"))["root"])
+            folder = Path(json.loads(record.read_text(encoding=UTF8))["root"])
         except (OSError, ValueError, KeyError, TypeError):
             continue
         if (group_of(store, folder, pins) or (None,))[0] == group[0]:
@@ -123,7 +135,7 @@ def members_of(store: Path, base_dir: Path) -> list[Path]:
 
 
 def resolve_store(store: Path, record: bool) -> Path:
-    top = git_output("rev-parse", "--show-toplevel")
+    top = git_output(GIT_REV_PARSE, FLAG_SHOW_TOPLEVEL)
     if not top:
         # Non-Git fragments always live in the folder's own scope; a pin only groups scopes.
         cwd = Path.cwd().resolve()
@@ -135,7 +147,7 @@ def resolve_store(store: Path, record: bool) -> Path:
                 record_scope(group[1] / "workspace.json", group[0])
         return base
     toplevel = Path(top).resolve()
-    common_path = git_output("rev-parse", "--git-common-dir")
+    common_path = git_output(GIT_REV_PARSE, "--git-common-dir")
     if not common_path:
         raise ValueError("Cannot resolve Git common directory")
     common = Path(common_path).resolve()
@@ -180,9 +192,9 @@ def print_siblings(store: Path, base_dir: Path) -> None:
         if not found:
             continue
         count = {kind: sum(p.name.startswith(f"{kind}-") for p in found) for kind in ("decision", "log", "reference", "feedback")}
-        newest = datetime.fromtimestamp(max(p.stat().st_mtime for p in found), timezone.utc).astimezone().strftime("%Y-%m-%d")
+        newest = datetime.fromtimestamp(max(p.stat().st_mtime for p in found), UTC).astimezone().strftime("%Y-%m-%d")
         try:
-            status = "present" if Path(json.loads((path / "worktree.json").read_text(encoding="utf-8"))["root"]).is_dir() else "missing"
+            status = "present" if Path(json.loads((path / "worktree.json").read_text(encoding=UTF8))["root"]).is_dir() else "missing"
         except (OSError, ValueError, KeyError, TypeError):
             status = "unknown"
         lines.append(f"- {path.name}: {count['decision']} decisions, {count['log']} logs, {count['reference']} references, "
@@ -206,9 +218,9 @@ def adopt(base_dir: Path, source: Path) -> None:
     renamed = {old: new for old, new in names.items() if old != new}
     print(f"[Memoir] Adopted {len(moving)} files from {source.name}.")
     for path in moving:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = path.read_text(encoding=UTF8).splitlines(keepends=True)
         for i, line in enumerate(lines):
-            if line.startswith(("Supersedes:", "Superseded-By:")):
+            if line.startswith((HDR_SUPERSEDES, "Superseded-By:")):
                 lines[i] = SUPERSEDED_RE.sub(lambda m: renamed.get(m.group(), m.group()), line)
         dest = base_dir / "active" / names[path.name]
         # Write before unlinking: a crash leaves a duplicate, never a lost fragment.
@@ -228,10 +240,8 @@ def check_access(base_dir: Path) -> None:
         print(f"[Memoir] No write access to {base_dir.absolute()} ({e.strerror or e})", file=sys.stderr)
         sys.exit(3)
 
-def migrate_legacy(base_dir: Path) -> None:
-    """Copy a v1 store into an empty v2 scope, leaving the original in place (FR-1.7)."""
-    cwd = Path.cwd().resolve()
-    top = git_output("rev-parse", "--show-toplevel")
+
+def _legacy_candidates(cwd: Path, top: str) -> list[Path]:
     root = Path(top).resolve() if top else cwd
     config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     digest = hashlib.sha256(str(cwd).encode()).hexdigest()[:8]
@@ -241,17 +251,36 @@ def migrate_legacy(base_dir: Path) -> None:
         candidates.append(group[1] / "paths" / ("__".join(cwd.relative_to(group[0]).parts) or "_root"))
     if top:  # notes written before this folder became a Git repo
         candidates.append(store_root() / "standalone" / scope_id(cwd, cwd))
+    return candidates
+
+
+def _legacy_files(root: Path) -> list[Path]:
+    return [
+        f
+        for d in ("active", "archive")
+        if (root / d).is_dir()
+        for f in (root / d).rglob("*")
+        if f.is_file()
+    ]
+
+
+def _is_legacy_file_covered(base_dir: Path, legacy: Path, file_path: Path) -> bool:
+    if (base_dir / file_path.relative_to(legacy)).exists():
+        return True
+    return file_path.parent == legacy / "active" and any((base_dir / "archive").glob(f"[0-9]*-{file_path.name}"))
+
+
+def migrate_legacy(base_dir: Path) -> None:
+    """Copy a v1 store into an empty v2 scope, leaving the original in place (FR-1.7)."""
+    cwd = Path.cwd().resolve()
+    top = git_output(GIT_REV_PARSE, FLAG_SHOW_TOPLEVEL)
+    candidates = _legacy_candidates(cwd, top)
     legacy = next((c for c in candidates if (c / "active").is_dir() or (c / "archive").is_dir()), None)
     if legacy is None:
         return
     if any(any((base_dir / d).iterdir()) for d in ("active", "archive")):
         # v2 files change after the copy, so match by name: kept as-is, or an active fragment archived since.
-        covered = all(
-            (base_dir / f.relative_to(legacy)).exists()
-            or (f.parent == legacy / "active" and any((base_dir / "archive").glob(f"[0-9]*-{f.name}")))
-            for d in ("active", "archive") if (legacy / d).is_dir()
-            for f in (legacy / d).rglob("*") if f.is_file()
-        )
+        covered = all(_is_legacy_file_covered(base_dir, legacy, f) for f in _legacy_files(legacy))
         if covered:
             print(f"[Memoir] Legacy store {legacy} is already migrated to {base_dir}; delete {legacy} to silence this.", file=sys.stderr)
         else:
@@ -264,6 +293,7 @@ def migrate_legacy(base_dir: Path) -> None:
             copied += sum(1 for p in (legacy / d).rglob("*") if p.is_file())
     print(f"[Memoir] Migrated {copied} files from {legacy} to {base_dir}; delete {legacy} once verified.", file=sys.stderr)
 
+
 def init_store(base_dir: Path):
     active_dir = base_dir / "active"
     archive_dir = base_dir / "archive"
@@ -271,11 +301,35 @@ def init_store(base_dir: Path):
     print(f"[Memoir] Initialized store at: {base_dir.absolute()}")
     return active_dir, archive_dir
 
+
 def generate_prompt(base_dir: Path):
     active_dir = base_dir / "active"
     print("SYSTEM CONTEXT INJECTION:")
     print("Your Memoir store is active. You must write all files strictly to this absolute path:")
     print(f"{active_dir.absolute()}")
+
+
+def _superseded_names(path: Path) -> list[str]:
+    names = {
+        name
+        for line in path.read_text(encoding=UTF8).splitlines()
+        if line.startswith(HDR_SUPERSEDES)
+        for name in SUPERSEDED_RE.findall(line)
+    }
+    return sorted(names - {path.name})
+
+
+def _resolve_superseded_holder(name: str, own_scope: Path, scopes: list[Path], superseder: str) -> Path | None:
+    own = own_scope / "active" / name
+    if own.is_file():
+        return own
+    holders = [s / "active" / name for s in scopes if (s / "active" / name).is_file()]
+    if len(holders) == 1:
+        return holders[0]
+    if holders:
+        print(f"[Memoir] {superseder} supersedes {name}, held by {len(holders)} scopes; skipped.", file=sys.stderr)
+    return None
+
 
 def find_superseded(scopes: list[Path]) -> dict[Path, str]:
     """Active decisions named on another active decision's `Supersedes:` line, mapped to that decision's name.
@@ -285,20 +339,15 @@ def find_superseded(scopes: list[Path]) -> dict[Path, str]:
     found: dict[Path, str] = {}
     for scope in scopes:
         for path in sorted((scope / "active").glob("decision-*.md")):
-            for line in path.read_text().splitlines():
-                if not line.startswith("Supersedes:"):
-                    continue
-                for name in sorted(set(SUPERSEDED_RE.findall(line)) - {path.name}):
-                    own = scope / "active" / name
-                    holders = [own] if own.is_file() else [s / "active" / name for s in scopes if (s / "active" / name).is_file()]
-                    if len(holders) == 1:
-                        found[holders[0]] = path.name
-                    elif holders:
-                        print(f"[Memoir] {path.name} supersedes {name}, held by {len(holders)} scopes; skipped.", file=sys.stderr)
+            for name in _superseded_names(path):
+                holder = _resolve_superseded_holder(name, scope, scopes, path.name)
+                if holder is not None:
+                    found[holder] = path.name
     return dict(sorted(found.items()))
 
+
 def atomic_write(path: Path, contents: str, *, mode: int | None = None) -> None:
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", encoding=UTF8, dir=path.parent, delete=False) as tmp:
         temporary = Path(tmp.name)
         try:
             tmp.write(contents)
@@ -313,13 +362,14 @@ def atomic_write(path: Path, contents: str, *, mode: int | None = None) -> None:
 
 def add_superseded_by(path: Path, by: str) -> None:
     """Write a `Superseded-By:` back-link right after the `Supersedes:` line, once."""
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding=UTF8).splitlines()
     link = f"Superseded-By: {by}"
     if link in lines:
         return
-    i = next((k + 1 for k, line in enumerate(lines) if line.startswith("Supersedes:")), len(lines))
+    i = next((k + 1 for k, line in enumerate(lines) if line.startswith(HDR_SUPERSEDES)), len(lines))
     lines.insert(i, link)
     atomic_write(path, "\n".join(lines) + "\n")
+
 
 def archive_files(targets: list[tuple[str, Path]]):
     """Move each (name, active path) into the archive/ beside it."""
@@ -352,11 +402,12 @@ def archive_files(targets: list[tuple[str, Path]]):
     if failed:
         sys.exit(1)
 
+
 def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path]):
-    state_file = base_dir / "active" / "state-current.md"
+    state_file = base_dir / "active" / STATE_FILENAME
     files = [state_file] if state_file.exists() else []
     # Other group members' and siblings' state belongs to their own folders (FR-2.4).
-    files += sorted(p for s in scopes for p in (s / "active").glob("*.md") if p.name != "state-current.md")
+    files += sorted(p for s in scopes for p in (s / "active").glob("*.md") if p.name != STATE_FILENAME)
     files += [p for s in dict.fromkeys(extra) for p in fragments(s)]
 
     generate_prompt(base_dir)
@@ -369,25 +420,30 @@ def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path]):
         print("\nBased on the state file, resume the current task.")
     print_siblings(store_root(), base_dir)
 
+
+def _orphan_missing_root(record: Path) -> str | None:
+    # A linked repo, scope or record could redirect pruning outside the store.
+    if record.resolve() != record:
+        print(f"[Memoir] Skipping linked metadata: {record}", file=sys.stderr)
+        return None
+    metadata = json.loads(record.read_text(encoding=UTF8))
+    root = metadata.get("root") if isinstance(metadata, dict) else None
+    if not isinstance(root, str) or not Path(root).is_absolute():
+        raise ValueError(f"Invalid root in {record}")
+    try:
+        info = Path(root).stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return root
+    return None if stat.S_ISDIR(info.st_mode) else root
+
+
 def collect_orphans(store: Path, prune: bool) -> None:
     for pattern in ("repos/*/clones/*/clone.json", "pinned/*/workspace.json", "standalone/*/scope.json"):
         for record in sorted(store.glob(pattern)):
-            # A linked repo, scope or record could redirect pruning outside the store.
-            if record.resolve() != record:
-                print(f"[Memoir] Skipping linked metadata: {record}", file=sys.stderr)
+            missing = _orphan_missing_root(record)
+            if missing is None:
                 continue
-            metadata = json.loads(record.read_text(encoding="utf-8"))
-            root = metadata.get("root") if isinstance(metadata, dict) else None
-            if not isinstance(root, str) or not Path(root).is_absolute():
-                raise ValueError(f"Invalid root in {record}")
-            try:
-                info = Path(root).stat()
-            except (FileNotFoundError, NotADirectoryError):
-                pass
-            else:
-                if stat.S_ISDIR(info.st_mode):
-                    continue
-            print(f"[Memoir] Orphan: {record.parent} (missing directory {root})")
+            print(f"[Memoir] Orphan: {record.parent} (missing directory {missing})")
             if prune:
                 shutil.rmtree(record.parent)
 
@@ -426,57 +482,81 @@ def instruction_lines(lines: list[str]):
 
 
 def instruction_target(root: Path, target: str | None) -> Path:
-    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if target is None or target == claude.name:
-        if claude.is_file() and claude.resolve().parent == root:
-            imports = claude.read_bytes().decode("utf-8-sig").splitlines()
-            if any(re.search(r"(?:^|\s)@(?:\./)?AGENTS\.md(?=\s|[.,;:]?(?:\s|$))",
-                             re.sub(r"`[^`]*`", "", line)) for _, line in instruction_lines(imports)):
-                return agents
+    agents, claude = root / AGENTS_MD, root / CLAUDE_MD
+    if (target is None or target == claude.name) and claude.is_file() and claude.resolve().parent == root:
+        imports = claude.read_bytes().decode(UTF8_SIG).splitlines()
+        if any(re.search(r"(?:^|\s)@(?:\./)?AGENTS\.md(?=\s|[.,;:]?(?:\s|$))",
+                         re.sub(r"`[^`]*`", "", line)) for _, line in instruction_lines(imports)):
+            return agents
     if target:
         return root / target
     if agents.exists() and claude.exists() and agents.resolve() != claude.resolve():
-        raise ValueError(f"Both instruction files exist in {root}. Choose AGENTS.md or CLAUDE.md.")
+        raise ValueError(f"Both instruction files exist in {root}. Choose {AGENTS_MD} or {CLAUDE_MD}.")
     return claude if claude.exists() and not agents.exists() else agents
+
+
+def _parse_guard_marker(value: str, line_num: int) -> tuple[str, str] | None:
+    if not re.match(r"^\s*<!--\s*memoir(?:-wiki)?:", value):
+        return None
+    match = re.fullmatch(r"<!-- (memoir(?:-wiki)?):(begin|end) -->", value)
+    if not match:
+        raise ValueError(f"Malformed or overlapping Memoir guards at line {line_num}")
+    return match.groups()
+
+
+def _scan_instruction_guards(lines: list[str], heading: str) -> tuple[dict[str, tuple[int, int]], list[int]]:
+    legacy: list[int] = []
+    spans: dict[str, tuple[int, int]] = {}
+    opened: tuple[str, int] | None = None
+    for i, value in instruction_lines(lines):
+        if value == heading and opened is None:
+            legacy.append(i)
+        marker = _parse_guard_marker(value, i + 1)
+        if not marker:
+            continue
+        owner, side = marker
+        if side == "begin" and opened is None and owner not in spans:
+            opened = (owner, i)
+        elif side == "end" and opened and opened[0] == owner:
+            spans[owner] = (opened[1], i)
+            opened = None
+        else:
+            raise ValueError(f"Malformed or overlapping Memoir guards at line {i + 1}")
+    if opened:
+        raise ValueError("Unclosed Memoir guard in project instructions")
+    return spans, legacy
+
+
+def _resolve_legacy_span(
+    lines: list[str],
+    legacy: list[int],
+    spans: dict[str, tuple[int, int]],
+    skill: str,
+    expected: list[str],
+) -> tuple[int, int]:
+    start = legacy[0]
+    stop = start + len(expected)
+    following = next((line for line in lines[stop:] if line.strip()), "")
+    if (
+        skill in spans
+        or len(legacy) != 1
+        or (following and not following.startswith(("#", "<!--")))
+        or [line.rstrip("\r\n") for line in lines[start:stop]] != expected
+    ):
+        raise ValueError(f"Review the existing '{expected[0]}' section before enabling {skill}")
+    return start, stop - 1
 
 
 def guarded_instructions(text: str, skill: str, body: str) -> str:
     lines = text.splitlines(keepends=True)
     newline = "\r\n" if text.partition("\n")[0].endswith("\r") else "\n"
     begin, end = f"<!-- {skill}:begin -->", f"<!-- {skill}:end -->"
-    heading = body.splitlines()[0]
-    legacy = []
-    spans = {}
-    opened = None
-    for i, value in instruction_lines(lines):
-        if value == heading and opened is None:
-            legacy.append(i)
-        if not re.match(r"^\s*<!--\s*memoir(?:-wiki)?:", value):
-            continue
-        match = re.fullmatch(r"<!-- (memoir(?:-wiki)?):(begin|end) -->", value)
-        if match:
-            owner, side = match.groups()
-            if side == "begin" and opened is None and owner not in spans:
-                opened = (owner, i)
-                continue
-            if side == "end" and opened and opened[0] == owner:
-                spans[owner] = (opened[1], i)
-                opened = None
-                continue
-        raise ValueError(f"Malformed or overlapping Memoir guards at line {i + 1}")
-    if opened:
-        raise ValueError("Unclosed Memoir guard in project instructions")
+    expected = body.splitlines()
+    spans, legacy = _scan_instruction_guards(lines, expected[0])
 
-    block = newline.join([begin, *body.splitlines(), end])
+    block = newline.join([begin, *expected, end])
     if legacy:
-        start = legacy[0]
-        expected = body.splitlines()
-        stop = start + len(expected)
-        following = next((line for line in lines[stop:] if line.strip()), "")
-        if (skill in spans or len(legacy) != 1 or (following and not following.startswith(("#", "<!--")))
-                or [line.rstrip("\r\n") for line in lines[start:stop]] != expected):
-            raise ValueError(f"Review the existing '{heading}' section before enabling {skill}")
-        spans[skill] = (start, stop - 1)
+        spans[skill] = _resolve_legacy_span(lines, legacy, spans, skill, expected)
     if skill in spans:
         start, last = spans[skill]
         ending = lines[last][len(lines[last].rstrip("\r\n")):]
@@ -491,12 +571,12 @@ def guarded_instructions(text: str, skill: str, body: str) -> str:
 def project_init(skill: str, target: str | None) -> None:
     import fcntl
 
-    top = git_output("rev-parse", "--show-toplevel")
+    top = git_output(GIT_REV_PARSE, FLAG_SHOW_TOPLEVEL)
     root = Path(top).resolve() if top else Path.cwd()
     if not top and (group := group_of(store_root(), root)):
         root = group[0]
     reference = Path(__file__).resolve().parents[2] / skill / "references" / "always-on.md"
-    template = re.search(r"^```markdown\n(.+?)\n```$", reference.read_text(encoding="utf-8"), re.M | re.S)
+    template = re.search(r"^```markdown\n(.+?)\n```$", reference.read_text(encoding=UTF8), re.M | re.S)
     if not template:
         raise ValueError(f"Missing instruction block in {reference}")
     # Lock the directory so simultaneous inits can atomically replace the same file in either order.
@@ -508,7 +588,7 @@ def project_init(skill: str, target: str | None) -> None:
             raise ValueError(f"Expected a regular project instruction file at {path}")
         existing = path.exists()
         raw = path.read_bytes() if existing else b""
-        text = raw.decode("utf-8-sig")
+        text = raw.decode(UTF8_SIG)
         updated = guarded_instructions(text, skill, template[1])
         if updated == text:
             print(f"Already current: {path}")
@@ -521,25 +601,23 @@ def project_init(skill: str, target: str | None) -> None:
         os.close(directory)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Memoir Management CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="Initialize the memoir directories")
     setup = subparsers.add_parser("project-init", help="Install one skill's project instructions")
     setup.add_argument("skill", choices=("memoir", "memoir-wiki"))
-    setup.add_argument("target", nargs="?", choices=("AGENTS.md", "CLAUDE.md"))
-    
+    setup.add_argument("target", nargs="?", choices=(AGENTS_MD, CLAUDE_MD))
+
     archive_parser = subparsers.add_parser("archive", help="Move specified files to the archive")
     archive_parser.add_argument("files", nargs="*", help="List of filenames in active/ to archive")
     archive_parser.add_argument("--superseded", action="store_true", help="Archive every decision named in an active decision's Supersedes: line")
 
     subparsers.add_parser("path", help="Print the resolved base directory")
-
     subparsers.add_parser("scope", help="Print the wiki scope root and the fragment directories it covers")
-    
     subparsers.add_parser("prompt", help="Print the absolute path instruction for LLM injection")
-    
+
     resume_parser = subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
     resume_parser.add_argument("--with", dest="siblings", action="append", default=[], metavar="KEY",
                                help="Also load a sibling worktree's fragments (repeatable)")
@@ -555,35 +633,25 @@ def main():
     mode = gc_parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Only report orphans (default)")
     mode.add_argument("--prune", action="store_true", help="Remove each orphaned scope directory")
+    return parser
 
-    args = parser.parse_args()
-    if args.command == "project-init":
-        project_init(args.skill, args.target)
-        return
-    if (store_root() / "active").is_dir():
-        raise ValueError(f"{store_root()} is a v1 store (has active/); unset or repoint MEMOIR_STORE to a v2 store root.")
-    if args.command == "gc":
-        collect_orphans(store_root(), args.prune)
-        return
-    if args.command in {"pin", "unpin"}:
-        update_pin(store_root(), args.directory.expanduser().resolve(), args.command == "pin")
-        return
-    read_only = args.command in {"path", "scope"}
-    base_dir = resolve_store(store_root(), not read_only)
-    if not read_only:
-        check_access(base_dir)
-        migrate_legacy(base_dir)
 
+def _run_store_command(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    store: Path,
+    base_dir: Path,
+) -> None:
     if args.command == "path":
         print(base_dir.absolute())
     elif args.command == "scope":
-        print_scope(store_root(), base_dir)
+        print_scope(store, base_dir)
     elif args.command == "init":
         init_store(base_dir)
     elif args.command == "archive":
         if not args.files and not args.superseded:
             parser.error("archive needs filenames or --superseded")
-        superseded = find_superseded(members_of(store_root(), base_dir)) if args.superseded else {}
+        superseded = find_superseded(members_of(store, base_dir)) if args.superseded else {}
         # Back-link the active copy before the move: a crash leaves a duplicate, never a lost fragment.
         for path, by in superseded.items():
             add_superseded_by(path, by)
@@ -592,10 +660,33 @@ def main():
     elif args.command == "prompt":
         generate_prompt(base_dir)
     elif args.command == "resume":
-        extra = [sibling(store_root(), base_dir, key) for key in args.siblings]
-        generate_resume(base_dir, members_of(store_root(), base_dir), extra)
+        extra = [sibling(store, base_dir, key) for key in args.siblings]
+        generate_resume(base_dir, members_of(store, base_dir), extra)
     elif args.command == "adopt":
-        adopt(base_dir, sibling(store_root(), base_dir, args.key))
+        adopt(base_dir, sibling(store, base_dir, args.key))
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.command == "project-init":
+        project_init(args.skill, args.target)
+        return
+    store = store_root()
+    if (store / "active").is_dir():
+        raise ValueError(f"{store} is a v1 store (has active/); unset or repoint MEMOIR_STORE to a v2 store root.")
+    if args.command == "gc":
+        collect_orphans(store, args.prune)
+        return
+    if args.command in {"pin", "unpin"}:
+        update_pin(store, args.directory.expanduser().resolve(), args.command == "pin")
+        return
+    read_only = args.command in {"path", "scope"}
+    base_dir = resolve_store(store, not read_only)
+    if not read_only:
+        check_access(base_dir)
+        migrate_legacy(base_dir)
+    _run_store_command(parser, args, store, base_dir)
 
 if __name__ == "__main__":
     try:
