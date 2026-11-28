@@ -16,6 +16,7 @@ ignores:
   - ".claude/**"
   - ".agents/**"
   - ".pytest_cache/**"
+  - ".nox/**"
   - ".venv/**"
   - "dist/**"
   - "evals/fixtures/**"

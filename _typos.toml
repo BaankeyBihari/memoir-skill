@@ -3,6 +3,7 @@ extend-exclude = [
   ".claude/**",
   ".agents/**",
   ".pytest_cache/**",
+  ".nox/**",
   ".venv/**",
   "dist/**",
   "memoir-workspace/**",

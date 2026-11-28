@@ -12,6 +12,7 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - `scripts/install.sh`: unified installer for both skills and `memoir-ui`.
 - `scripts/uninstall.sh`: manifest-driven uninstaller that rolls back installed skills, `memoir-ui`, and CLI config edits while preserving store data.
 - `pyproject.toml`: Python project metadata, `.venv` dev dependencies, and Ruff/pytest configuration.
+- `noxfile.py`: on-demand Python 3.11+ compatibility matrix (`mise run test:compat`).
 - `mise.toml`: repo build, test, and lint task runner configuration.
 - `.pre-commit-config.yaml`: local pre-commit hook configuration (install with `mise run hooks`).
 - `test_memoir.py`: self-check for `memoir.py` and `README.md` / `SKILL.md` invariants.
