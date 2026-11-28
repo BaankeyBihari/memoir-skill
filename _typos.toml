@@ -3,9 +3,11 @@ extend-exclude = [
   ".claude/**",
   ".agents/**",
   ".pytest_cache/**",
+  ".venv/**",
   "dist/**",
   "memoir-workspace/**",
   "dashboard/go.sum",
+  "uv.lock",
 ]
 
 [default.extend-words]
