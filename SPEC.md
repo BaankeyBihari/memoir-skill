@@ -30,7 +30,8 @@ Default store root (`$STORE_ROOT`) SHALL resolve from `$MEMOIR_STORE` if set, ot
 │                   │   │   ├── decision-*.md
 │                   │   │   ├── log-*.md
 │                   │   │   ├── reference-*.md
-│                   │   │   └── feedback-*.md
+│                   │   │   ├── feedback-*.md
+│                   │   │   └── task-*.md
 │                   │   └── archive/
 │                   └── Worktrees__wt-feature/     # Worktree relative to --show-toplevel
 │                       ├── worktree.json
@@ -118,17 +119,18 @@ All seven files are UTF-8 JSON. Missing pinned.json means an empty array.
 
 Fragments are Markdown with plain line-oriented fields directly below the title.
 Archive names prepend the local date as `YYYYMMDD-`. Automatic supersession
-inserts `Superseded-By: decision-<slug>.md` after the older decision's
-`Supersedes:` field before moving the file.
+inserts `Superseded-By: <replacement filename>` after the older decision, reference or feedback fragment's
+`Supersedes:` field before moving the file. Older fragments without a supersession field remain valid.
 
 Filenames are lowercase kebab-case with no underscores, spaces or uppercase letters (e.g. `decision-use-env-vars.md`), because `archive` and the `Supersedes:` matcher only recognize that shape; any other name can never be archived or superseded. Use exactly these prefixes:
 1. `decision-{slug}.md`: explicit architectural choices, constraints or tool selections.
 2. `state-current.md`: the single dynamic snapshot of current progress.
 3. `log-{slug}.md`: major events, milestones or blocking errors.
 4. `reference-{slug}.md`: pointers to local file paths, Git repositories or API docs.
-5. `feedback-{slug}.md`: durable collaboration or working-style preferences (e.g. "show trade-off axes before a recommendation", "prefer minimal diffs"). Retention is judgement-based like decisions, logs and references; there is no active-count cap.
+5. `feedback-{slug}.md`: durable collaboration or working-style preferences (e.g. "show trade-off axes before a recommendation", "prefer minimal diffs"). Supersession names a replacement of the same kind.
+6. `task-{slug}.md`: open or completed follow-up work. Reload archives completed tasks and logs older than the configured age. The wiki excludes tasks and state.
 
-The slug is 2 to 5 words describing the content. If the file already exists, append `-2`, `-3`, and so on. Only `state-current.md` is ever overwritten.
+The slug is 2 to 5 words describing the content. If the file already exists, append `-2`, `-3`, and so on. Update state and task completion in place. Keep the original task filename and creation date.
 
 Decision:
 
@@ -147,9 +149,19 @@ Log:
     Event: <what happened>
     Impact: <what it changes or blocks>
 
+Task:
+
+    # <Title>
+    Created: YYYY-MM-DD
+    Status: open | done
+    Done: YYYY-MM-DD | none
+    Origin: <fragment filename | none>
+    Task: <self-contained follow-up>
+
 Reference:
 
     # <Title>
+    Supersedes: <reference filename | none>
     Target: <absolute path | URL>
     Why: <when to consult it>
 
@@ -157,6 +169,7 @@ Feedback:
 
     # <Title>
     Date: YYYY-MM-DD
+    Supersedes: <feedback filename | none>
     Feedback: <the durable collaboration or style preference, stated as a rule>
     Why: <when it applies, or the correction that prompted it>
 

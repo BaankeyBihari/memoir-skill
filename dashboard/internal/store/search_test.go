@@ -20,6 +20,8 @@ func TestSearchIndexQueryFiltersAndConcurrency(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, dirStandalone, "scratch--33333333", dirActive, "log-sse-check.md"),
 		"# SSE Check\nDate: 2026-11-21\nEvent: Verified SSE stream.\n")
 
+	mustWriteFile(t, filepath.Join(root, dirStandalone, "scratch--33333333", dirArchive, "20261110-task-follow-up.md"), "# Follow up\nStatus: done\n")
+
 	idx := NewSearchIndex(root)
 	if err := idx.Rebuild(); err != nil {
 		t.Fatalf("Rebuild failed: %v", err)
@@ -34,6 +36,10 @@ func TestSearchIndexQueryFiltersAndConcurrency(t *testing.T) {
 	// Scope filter.
 	if pinnedRes := idx.Query("sse", dirPinned, "", 20); len(pinnedRes) != 1 || pinnedRes[0].Scope != dirPinned {
 		t.Fatalf("expected 1 pinned result, got %+v", pinnedRes)
+	}
+
+	if tasks := idx.Query("follow", dirStandalone, "task", 20); len(tasks) != 1 || !tasks[0].Archived {
+		t.Fatalf("expected archived task in task filter: %+v", tasks)
 	}
 
 	// Type filter.

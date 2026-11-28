@@ -2,7 +2,7 @@
 name: memoir
 license: MIT
 allowed-tools: Read Glob Write(~/.memoir/**/active/*.md) Edit(~/.memoir/**/active/*.md)
-description: Persist decisions, logs, references, feedbacks and working state to project-scoped files so an LLM session can be cleared and resumed without losing context. Use for /memoir init|decision|log|reference|feedback|state|capture|coach|reload|adopt|pin|unpin, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, or restore the last session. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
+description: Persist decisions, logs, references, feedbacks and working state to project-scoped files so an LLM session can be cleared and resumed without losing context. Use for /memoir init|decision|log|reference|feedback|state|capture|coach|reload|prune|adopt|pin|unpin, when the user chooses among alternatives or says "decision:" or "let's go with X", or when the user asks to save a decision, record a durable preference, capture everything from the conversation, snapshot progress, decide whether to clear context, restore the last session, or clean up old session notes and recover unfinished follow-ups. Also use when the user says the chat is long, messy or going in circles, asks whether to compact or clear, or wants to save what was decided before starting over.
 ---
 
 # Role
@@ -27,9 +27,10 @@ Filenames are lowercase kebab-case with no underscores, spaces or uppercase lett
 2. `state-current.md`: the single dynamic snapshot of current progress.
 3. `log-{slug}.md`: major events, milestones or blocking errors.
 4. `reference-{slug}.md`: pointers to local file paths, Git repositories or API docs.
-5. `feedback-{slug}.md`: durable collaboration or working-style preferences (e.g. "show trade-off axes before a recommendation", "prefer minimal diffs"). Retention is judgement-based like decisions, logs and references; there is no active-count cap.
+5. `feedback-{slug}.md`: durable collaboration or working-style preferences (e.g. "show trade-off axes before a recommendation", "prefer minimal diffs"). Use same-kind supersession when a preference changes.
+6. `task-{slug}.md`: one self-contained open follow-up. Complete it in place when the conversation establishes it is done.
 
-The slug is 2 to 5 words describing the content. If the file already exists, append `-2`, `-3`, and so on. Only `state-current.md` is ever overwritten.
+The slug is 2 to 5 words describing the content. If the file already exists, append `-2`, `-3`, and so on. Update state and task completion in place. Keep completed tasks until reload archives them.
 
 Decision:
 
@@ -48,9 +49,19 @@ Log:
     Event: <what happened>
     Impact: <what it changes or blocks>
 
+Task:
+
+    # <Title>
+    Created: YYYY-MM-DD
+    Status: open | done
+    Done: YYYY-MM-DD | none
+    Origin: <fragment filename that raised it | none>
+    Task: <self-contained next step>
+
 Reference:
 
     # <Title>
+    Supersedes: <reference filename | none>
     Target: <absolute path | URL>
     Why: <when to consult it>
 
@@ -58,6 +69,7 @@ Feedback:
 
     # <Title>
     Date: YYYY-MM-DD
+    Supersedes: <feedback filename | none>
     Feedback: <the durable collaboration or style preference, stated as a rule>
     Why: <when it applies, or the correction that prompted it>
 
@@ -79,15 +91,17 @@ Execute each command with your native file-writing tools, targeting the absolute
 
 - `/memoir decision [text]`: write `decision-{slug}.md`. If it replaces an earlier decision in the active directory, name that file in `Supersedes:`.
 - Automatic decisions: when the user chooses among alternatives or says "decision:" or "let's go with X", write `decision-{slug}.md` as above without waiting for `/memoir decision` (FR-3.8).
-- `/memoir log [text]`: write `log-{slug}.md`.
+- `/memoir log [text]`: write `log-{slug}.md` for a finished event. Put open follow-ups in tasks, and durable tooling facts or working preferences in references or feedback.
+- When a reference or preference changes, name the replaced same-kind fragment on the new fragment’s `Supersedes:` line.
 - `/memoir reference [text]`: write `reference-{slug}.md`. The `Target` must be a URL or path the user stated verbatim, or an absolute path you checked exists. Don't build a path from a bare or relative filename without checking it; skip the reference instead, because a later session will trust the pointer and follow it to nothing.
 - `/memoir feedback [text]`: write `feedback-{slug}.md`. The `Feedback:` line must be a self-contained instruction or preference, e.g. "Always respond with only the template for the outcome; don't print capture's own reply as well".
 - `/memoir state`: overwrite `state-current.md` using the state format above.
 - `/memoir capture`: save everything from the conversation that isn't recorded yet, so nothing is lost when the chat is cleared.
   1. Run `python3 <this-skill-dir>/scripts/memoir.py resume` and read the fragments it lists, so you know what is already recorded.
-  2. Write a `decision-`, `log-`, `reference-` or `feedback-` fragment for each item in the conversation that no active fragment covers yet. Classify durable collaboration or working-style preferences as `feedback-` (a standing rule, not a task-specific instruction). Skip anything already recorded, even if worded differently: a duplicate decision splits one choice across two files and confuses `Supersedes:`. When the user corrected the same thing more than once, record the correction and name the rejected approach (e.g. "toasts, rejected by user 3x"): as a decision in `Alternatives:` for a task or design choice, or as feedback in `Why:` for a working-style preference; otherwise the next session repeats the mistake.
-  3. Overwrite `state-current.md`.
-  4. Reply with `Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated`, then the full path of each file written.
+  2. Write a `decision-`, `log-`, `reference-` or `feedback-` fragment for each item in the conversation that no active fragment covers yet. Use `Supersedes:` on each new decision, reference or feedback naming the active same-kind file it replaces, or `none`. Classify durable collaboration or working-style preferences as `feedback-` (a standing rule, not a task-specific instruction). Skip anything already recorded, even if worded differently: a duplicate decision splits one choice across two files and confuses `Supersedes:`. When the user corrected the same thing more than once, record the correction and name the rejected approach (e.g. "toasts, rejected by user 3x"): as a decision in `Alternatives:` for a task or design choice, or as feedback in `Why:` for a working-style preference; otherwise the next session repeats the mistake.
+  3. Write one open task per distinct unresolved follow-up. Record its originating fragment filename if known. Match existing tasks by their work before creating a new one. When an earlier task may already have finished, check archived tasks before reopening it. For work completed in this conversation, update the existing task’s `Status: done` and `Done:` date, preserving its filename, origin and creation date. Count only new transitions. Update tasks in the current writable scope.
+  4. Overwrite `state-current.md`. Point to the open task filenames for full backlog details and keep each section within three bullets.
+  5. Reply with `Captured: <n> decisions, <n> logs, <n> references, <n> feedback, <n> tasks opened, <n> tasks done, state updated`, then the full path of each file written.
 - `/memoir coach`: run `/memoir capture` first, then pick exactly one outcome, checking in this order:
   1. **CLEAR**: the goal changed, a decision was reversed, the user re-corrected or repeated an instruction two or more times, steering is hard ("I already said..."), or the history is noisy with dead ends. Capture has just recorded the decisions, so a fresh session loaded from memoir files is cleaner than a compacted noisy one. When torn between CLEAR and COMPACT, pick CLEAR.
   2. **COMPACT**: same goal, no friction, but the history holds working context that is costly to rebuild and doesn't fit a fragment, such as large files already read or a mapped codebase. Debug findings don't count: capture saves them as a log.
@@ -100,7 +114,7 @@ Execute each command with your native file-writing tools, targeting the absolute
       [Memoir Coach] CONTINUE
       Why:
       - <evidence>
-      Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated
+      Captured: <n> decisions, <n> logs, <n> references, <n> feedback, <n> tasks opened, <n> tasks done, state updated
       Next: <Next Action from state-current.md>
 
   COMPACT:
@@ -108,7 +122,7 @@ Execute each command with your native file-writing tools, targeting the absolute
       [Memoir Coach] COMPACT
       Why:
       - <evidence>
-      Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated
+      Captured: <n> decisions, <n> logs, <n> references, <n> feedback, <n> tasks opened, <n> tasks done, state updated
       Paste into your agent CLI:
 
       /compact Keep: <goal>; <next action>; <context worth keeping>. Decisions and state are in <absolute active path>.
@@ -120,23 +134,24 @@ Execute each command with your native file-writing tools, targeting the absolute
       [Memoir Coach] CLEAR
       Why:
       - <evidence>
-      Captured: <n> decisions, <n> logs, <n> references, <n> feedback, state updated
+      Captured: <n> decisions, <n> logs, <n> references, <n> feedback, <n> tasks opened, <n> tasks done, state updated
       Files: <each fragment capture wrote | none new>
       State saved -> <absolute path>/state-current.md
-      Superseded: <decision files named in another file's Supersedes: | none> (archived on reload)
+      Superseded: <decision, reference or feedback files named in a supersession chain | none> (archived on reload)
       Paste each line into your agent CLI, one at a time:
 
       /clear
       /memoir reload
 
   `Files:` lets the user check what was saved before `/clear`, which can't be undone. Print the paste lines exactly as shown, with no numbers, bullets or comments, so they paste cleanly. Leave the resume prompt to `reload`: the CLI builds it from the files actually on disk, and a hand-written one drifts from them (FR-3.6).
-- `/memoir reload [--peek] [key ...]`: restore the last recorded session. Each `key` also loads that sibling worktree's decisions, logs, references and feedback for this reload only; a `<clone_id>/<key>` loads a checkout of another clone of the same repository. `--peek` also lists the other clones.
-  1. Run `python3 <this-skill-dir>/scripts/memoir.py archive --superseded`. This moves every decision named on another decision's `Supersedes:` line into `archive/`, writing a `Superseded-By:` back-link into each archived copy so the archived decision names the one that replaced it.
+- `/memoir reload [--peek] [key ...]`: restore the last recorded session. Each `key` also loads that sibling worktree's decisions, logs, references, feedback and tasks for this reload only; a `<clone_id>/<key>` loads a checkout of another clone of the same repository. `--peek` also lists the other clones.
+  1. Run `python3 <this-skill-dir>/scripts/memoir.py archive --retired`. This archives superseded decisions, references and feedback with back-links, completed tasks, and logs older than `MEMOIR_LOG_MAX_AGE_DAYS` (default 30). A plain `resume` used by capture performs no retirement.
   2. Run `python3 <this-skill-dir>/scripts/memoir.py resume`, adding `--peek` if given and `--with <key>` for each given key. Use the active path it prints for every later write.
-  3. If it prints "No recorded session found", reply "No recorded session in <path>. Starting fresh." Include any `Wiki:` lag line it printed, then stop.
+  3. If it prints "No recorded session found", reply "No recorded session in <path>. Starting fresh." Include the `Active:` summary and any `Wiki:` lag line it printed, then stop.
   4. Otherwise read every file it lists, in order, starting with `state-current.md`.
-  5. Reply with the restored Goal and Next Action, the files archived in step 1, and how many decision, reference, log and feedback files were loaded. Repeat the exact `Wiki:` line if present. Leave ingest to an explicit request. If `resume` printed a sibling worktree list, repeat it and mention `/memoir reload <key>` to load one and `/memoir adopt <key>` once that branch has merged. If it printed other clones, repeat that block and mention `/memoir reload <clone_id>/<key>`; never offer to adopt from another clone. Wait for the user before acting on the Next Action.
+  5. Reply with the restored Goal and Next Action, the files archived in step 1, and how many decision, reference, log, feedback and task files were loaded. Repeat the `Active:` summary including its prune hint, and the exact `Wiki:` line if present. Leave ingest to an explicit request. If `resume` printed a sibling worktree list, repeat it and mention `/memoir reload <key>` to load one and `/memoir adopt <key>` once that branch has merged. If it printed other clones, repeat that block and mention `/memoir reload <clone_id>/<key>`; never offer to adopt from another clone. Wait for the user before acting on the Next Action.
 
-- `/memoir adopt <key>`: once a sibling worktree's branch has merged, run `python3 <this-skill-dir>/scripts/memoir.py adopt <key>` and reply with the files it moved and renamed. Its decisions, logs, references and feedback move into the current scope; colliding names get `-2`, `-3` and `Supersedes:` lines follow the rename. The sibling's `state-current.md` stays.
+- `/memoir prune`: Review the current checkout’s backlog. Use `memoir.py path` for the base directory. Read its active fragments and archived legacy logs; check both active and archived tasks before proposing a follow-up so completed or already tracked work stays closed. Keep decisions with unresolved `Deferred:` items. Propose missing tasks (including their origin) and archive filenames grouped by reason, then **wait for approval before writing anything**. If the user approves a subset, apply only those items. Recheck the approved files; create or verify each required task before archiving its source via `memoir.py archive <approved filenames>`. An aged-out log already in archive needs only the approved task. Report what changed and what remains.
+- `/memoir adopt <key>`: once a sibling worktree's branch has merged, run `python3 <this-skill-dir>/scripts/memoir.py adopt <key>` and reply with the files it moved and renamed. Its decisions, logs, references, feedback and tasks move into the current scope; colliding names get `-2`, `-3` and supersession and task origin links follow the rename. The sibling's `state-current.md` stays.
 - `/memoir pin [path]`: group a non-Git workspace and every folder under it. Run `python3 <this-skill-dir>/scripts/memoir.py pin <path>` (default: the current directory) and reply with the group path it prints. Each folder keeps writing to its own store, while `reload` in any of them loads the decisions, logs, references and feedback of the whole group; `state-current.md` stays per folder. Nothing is copied or moved.
 - `/memoir unpin [path]`: run `python3 <this-skill-dir>/scripts/memoir.py unpin <path>` and reply with the path it prints. Each folder's notes stay where they are and are no longer shared.

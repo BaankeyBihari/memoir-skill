@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SCRIPT = Path(__file__).parent / "skills" / "memoir" / "scripts" / "memoir.py"
@@ -195,6 +195,52 @@ def test_wiki_diff_and_lag() -> None:
         log = folder / "active" / LOG_X
         log.write_bytes(b"x")
         assert run_cli(member, env, "wiki-diff", check=True).stdout.strip().endswith(os.path.relpath(log, group))
+
+
+def test_retirement_and_backlog() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve()
+        env = {**os.environ, ENV_MEMOIR_STORE: str(root / "store"), "MEMOIR_LOG_MAX_AGE_DAYS": "30"}
+        run_cli(root, env, "init", check=True)
+        base = Path(run_cli(root, env, "path", check=True).stdout.strip())
+        active, archive = base / "active", base / "archive"
+        today = datetime.now().astimezone().date()
+        for days in (0, 30, 31):
+            (active / f"log-age-{days}.md").write_text(f"Date: {today - timedelta(days=days)}\n")
+        (active / "log-broken.md").write_text("Date: 2026-02-30\n")
+        (active / "log-future.md").write_text(f"Date: {today + timedelta(days=1)}\n")
+        (active / "task-open.md").write_text("Status: open\n\nStatus: done\n")
+        (active / "task-shipped.md").write_text("Status: done\n")
+        for kind in ("feedback", "reference"):
+            (active / f"{kind}-old.md").write_text("# Older fragment without Supersedes\n")
+            (active / f"{kind}-new.md").write_text(f"Supersedes: {kind}-old.md, task-open.md\n")
+        bad = {**env, "MEMOIR_LOG_MAX_AGE_DAYS": "-1"}
+        assert run_cli(root, bad, "archive", "--retired").returncode == 1
+        assert not list(archive.iterdir())
+        assert "Archived 4 files" in run_cli(root, env, "archive", "--retired", check=True).stdout
+        assert "Archived 0 files" in run_cli(root, env, "archive", "--retired", check=True).stdout
+        for name in ("task-open", "log-age-30", "log-broken", "log-future"):
+            assert (active / f"{name}.md").is_file()
+        for kind in ("reference", "feedback"):
+            assert f"Superseded-By: {kind}-new.md" in next(archive.glob(f"*-{kind}-old.md")).read_text()
+        assert "Archived 1 files" in run_cli(root, {**env, "MEMOIR_LOG_MAX_AGE_DAYS": "0"}, "archive", "--retired", check=True).stdout
+        assert (active / "log-age-0.md").exists()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Path(tmp) / "store"
+        run_store(store, "init")
+        active = Path(run_store(store, "path").stdout.strip()) / "active"
+        (active / "missing-target.md").symlink_to(active / "absent")
+        for index in range(50):
+            (active / f"task-{index}.md").touch()
+        size_file = active / "task-0.md"
+        size_file.write_bytes(b"x" * 61440)
+        assert "Active: 50 files, 61440 bytes\n" in run_store(store, "resume").stdout
+        size_file.write_bytes(b"x" * 61441)
+        assert "61441 bytes; run /memoir prune" in run_store(store, "resume").stdout
+        size_file.write_bytes(b"")
+        (active / "task-extra.md").touch()
+        assert "51 files, 0 bytes; run /memoir prune" in run_store(store, "resume").stdout
 
 
 def test_docs_and_skill_invariants() -> None:
@@ -590,19 +636,22 @@ def test_sibling_worktrees_and_adopt() -> None:
         assert "No clone path wt__feat/active in " in run_cli(main_wt, env, CMD_RESUME, FLAG_WITH, "wt__feat/active").stderr
         assert run_cli(tmp, env, "adopt", "x").returncode == 1
 
+        (active_dirs[feat_wt] / "task-review-auth.md").write_text(f"Origin: {DECISION_A}\nStatus: open\n")
         adopt_out = run_cli(main_wt, env, "adopt", "wt__feat", check=True)
         assert adopt_out.stdout.splitlines() == [
-            "[Memoir] Adopted 4 files from wt__feat.",
+            "[Memoir] Adopted 5 files from wt__feat.",
             f"{active_dirs[main_wt] / DECISION_A2} (renamed from {DECISION_A})",
             f"{active_dirs[main_wt] / DECISION_B}",
             f"{active_dirs[main_wt] / FEEDBACK_Y}",
             f"{active_dirs[main_wt] / LOG_X}",
+            f"{active_dirs[main_wt] / 'task-review-auth.md'}",
         ]
         assert (active_dirs[main_wt] / DECISION_A).read_text(encoding=UTF8) == f"{HDR_SUPERSEDES_NONE}main\n"
         assert (active_dirs[main_wt] / DECISION_A2).read_text(encoding=UTF8) == f"{HDR_SUPERSEDES_NONE}feat\n"
         assert (active_dirs[main_wt] / DECISION_B).read_text(encoding=UTF8) == (
             f"Date: 2026-11-01\nSupersedes: {DECISION_A2}\n"
         )
+        assert f"Origin: {DECISION_A2}" in (active_dirs[main_wt] / "task-review-auth.md").read_text()
         assert sorted(p.name for p in active_dirs[feat_wt].iterdir()) == [STATE_FILE]
         assert (active_dirs[main_wt] / STATE_FILE).read_text(encoding=UTF8) == "# main\n"
         assert "Adopted 0 files from wt__feat." in run_cli(main_wt, env, "adopt", "wt__feat").stdout
@@ -712,6 +761,7 @@ def test_peek_other_clones() -> None:
 
 def main() -> None:
     test_init_resume_and_archive()
+    test_retirement_and_backlog()
     test_wiki_diff_and_lag()
     test_docs_and_skill_invariants()
     test_project_init_blocks_and_adoption()

@@ -62,7 +62,7 @@ def test_clones_and_worktrees(tmp_path, store):
         assert datetime.fromisoformat(metadata["last_seen"]).tzinfo
         for checkout, key in [
             (dest / "Worktrees/wt-one", "Worktrees__wt-one"),
-            (dest.parent / "wt-two", "wt-two"),
+            (dest.parent / "wt-two", f"wt-two--{sha8(dest.parent / 'wt-two')}"),
         ]:
             git(dest, "worktree", "add", "--detach", str(checkout))
             sub = checkout / "nested"

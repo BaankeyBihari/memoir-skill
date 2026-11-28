@@ -486,6 +486,7 @@ body.is-resizing-sidebar {
 
 .kind-dot.kind-wiki { color: var(--accent); }
 .kind-dot.kind-decision { color: var(--success); }
+.kind-dot.kind-task,
 .kind-dot.kind-state { color: var(--warning); }
 .kind-dot.kind-log { color: var(--muted); }
 .kind-dot.kind-reference { color: var(--accent); }

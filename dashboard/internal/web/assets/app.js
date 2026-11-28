@@ -324,6 +324,7 @@
       case 'wiki': return 'wiki';
       case 'decision': return 'dec';
       case 'state': return 'state';
+      case 'task': return 'task';
       case 'log': return 'log';
       case 'reference': return 'ref';
       case 'feedback': return 'fb';
@@ -345,6 +346,7 @@
       decision: 'decision-',
       log: 'log-',
       reference: 'reference-',
+      task: 'task-',
       feedback: 'feedback-',
       state: 'state-'
     };

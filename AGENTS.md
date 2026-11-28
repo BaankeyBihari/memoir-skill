@@ -24,7 +24,7 @@ Memoir v2.0 is a monorepo composed of two agent skills (`skills/memoir` and `ski
 - `skills/memoir/scripts/memoir.py` uses only the Python 3.11+ standard library and keeps its PEP 723 header so `uv run` works (NFR-1.1).
 - `dashboard/` (`memoir-ui`) MUST compile with `CGO_ENABLED=0` to a single static binary with zero runtime dependencies (NFR-1.2). `memoir` and `memoir-wiki` MUST function identically without `memoir-ui` installed or running (SRD Section 2.1).
 - All memory, wiki, and search index data MUST remain strictly local on the user's filesystem (NFR-2.1).
-- Fragment filenames are lowercase kebab-case: `decision-*`, `log-*`, `reference-*`, or `feedback-*` with an `.md` extension, plus the single `state-current.md`.
+- Fragment filenames are lowercase kebab-case: `decision-*`, `log-*`, `reference-*`, `feedback-*`, or `task-*` with an `.md` extension, plus the single `state-current.md`.
 - The LLM never guesses storage paths. It uses only the exact absolute path printed by `memoir.py` (NFR-3.1).
 - Releases use bare, 1-based, non-zero-padded CalVer tags (`YYYY.M.N`, e.g., `2026.11.3`, `2027.1.1`), computed by `scripts/next-version.sh` in `.github/workflows/release.yml` (`gh workflow run release.yml --ref main`). Keep version fields out of source skills and `plugin.json`. Stamp packaged skills with the computed tag. Never push release tags by hand.
 - Run `mise run lint`, `mise run test`, and `mise run build` (or `python3 test_memoir.py`, `python3 scripts/test_install.py`, and `cd dashboard && go test -race ./...`) before calling a change done.

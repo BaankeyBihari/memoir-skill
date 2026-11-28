@@ -41,6 +41,7 @@ type SourceLink struct {
 }
 
 var (
+	fragmentFileRe = regexp.MustCompile(`(?:decision|log|task|reference|feedback)-[a-z0-9]+(?:-[a-z0-9]+)*\.md`)
 	decisionFileRe = regexp.MustCompile(`decision-[a-z0-9]+(?:-[a-z0-9]+)*\.md`)
 	inlineWikiRe   = regexp.MustCompile(`^\[\[([^\[\]|#]+)(?:#[^\[\]|]+)?(?:\|([^\[\]]+))?\]\]$`)
 )
@@ -48,6 +49,9 @@ var (
 var badgeHeaderKeys = map[string]bool{
 	hdrDate:         true,
 	"Updated":       true,
+	"Created":       true,
+	"Done":          true,
+	"Origin":        true,
 	"Type":          true,
 	"Status":        true,
 	hdrTarget:       true,
@@ -61,6 +65,7 @@ var bodyFieldKeys = map[string]bool{
 	"Why":          true,
 	"Alternatives": true,
 	"Deferred":     true,
+	"Task":         true,
 	"Event":        true,
 	"Impact":       true,
 	"Feedback":     true,
@@ -160,8 +165,8 @@ func buildBadgesAndSources(storeRoot, relPath string, fieldOrder []string, rawFi
 			if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") {
 				badge.URL = val
 			}
-		case hdrSupersedes, hdrSupersededBy:
-			badge.TargetPath = resolveDecisionHeaderRef(storeRoot, relPath, val)
+		case hdrSupersedes, hdrSupersededBy, "Origin":
+			badge.TargetPath = resolveFragmentHeaderRef(storeRoot, relPath, val)
 		}
 		badges = append(badges, badge)
 	}
@@ -230,7 +235,7 @@ func newestArchivedMatch(archiveAbs, match string) string {
 	return best
 }
 
-func resolveDecisionHeaderRef(storeRoot, relPath, val string) string {
+func resolveFragmentHeaderRef(storeRoot, relPath, val string) string {
 	trimmed := strings.TrimSpace(val)
 	if trimmed == "" || strings.EqualFold(trimmed, "none") {
 		return ""
@@ -243,7 +248,7 @@ func resolveDecisionHeaderRef(storeRoot, relPath, val string) string {
 		return ""
 	}
 
-	match := decisionFileRe.FindString(trimmed)
+	match := fragmentFileRe.FindString(trimmed)
 	if match == "" {
 		return ""
 	}
@@ -252,6 +257,13 @@ func resolveDecisionHeaderRef(storeRoot, relPath, val string) string {
 		return ""
 	}
 
+	if canonicalDecisionName(trimmed) == match && trimmed != match {
+		archived := path.Join(scopeRel, dirArchive, trimmed)
+		if _, err := store.ResolveSafeFile(storeRoot, archived); err == nil {
+			return archived
+		}
+		return ""
+	}
 	activeCandidate := path.Join(scopeRel, dirActive, match)
 	if _, err := store.ResolveSafeFile(storeRoot, activeCandidate); err == nil {
 		return activeCandidate
