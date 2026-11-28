@@ -61,8 +61,9 @@ with runs outside `[a-z0-9]` replaced by one hyphen and outer hyphens trimmed
   use the canonical filesystem path components. Without origin use `local__<clone_id>`.
 * The clone slug comes from the parent of the canonical Git common directory.
   Hash the common directory itself. Use `_main` for the main checkout, the
-  worktree's relative path for nested worktrees, or its basename for external
-  worktrees. Join path components with `__`. Invocation from a Git subdirectory
+  worktree's relative path for nested worktrees, or for external worktrees a
+  scope ID of the worktree's top-level directory (slugged basename, `--`, hash of
+  the path), so same-named external worktrees never share a folder. Join path components with `__`. Invocation from a Git subdirectory
   uses its checkout's key.
 * Outside Git, always hash the current directory and use its flat
   `standalone/` scope, recording the directory in `scope.json`. A pin is a
@@ -76,8 +77,10 @@ with runs outside `[a-z0-9]` replaced by one hyphen and outer hyphens trimmed
   `~/.config/memoir/memories/<sha8>`) are copied into an empty resolved scope
   on first use and left in place (SRD FR-1.7). Legacy pre-group
   `pinned/<slug>/paths/<key>` fragments are copied into the directory's
-  standalone scope, and a standalone scope into its repository scope after
-  `git init`, the same way. A store root containing
+  standalone scope, a standalone scope into its repository scope after
+  `git init`, and an external worktree's pre-hash `paths/<basename>` (when its
+  `worktree.json` is absent or names that worktree) into its hashed key, the
+  same way. A store root containing
   `active/` is a v1 base directory and is rejected (SRD FR-1.8).
 
 ## Wiki scopes and links
