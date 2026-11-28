@@ -68,7 +68,7 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 | `/memoir state` | Overwrites `state-current.md` (Goal, Completed, Blocked/Pending, Next Action) |
 | `/memoir capture` | Writes every unrecorded decision, log, reference and feedback from the conversation, then updates `state-current.md` |
 | `/memoir coach` | Captures, then recommends CONTINUE, COMPACT or CLEAR with evidence and paste-ready next steps |
-| `/memoir reload [key ...]` | Archives superseded decisions and loads the last recorded session; lists sibling worktrees with fragments, and loads each given sibling key's fragments too |
+| `/memoir reload [--peek] [key ...]` | Archives superseded decisions and loads the last recorded session; lists sibling worktrees with fragments, and loads each given sibling key's fragments too. `--peek` also lists other clones of the repo, loadable as `<clone_id>/<key>` |
 | `/memoir adopt <key>` | Moves a merged sibling worktree's decisions, logs, references and feedback into this scope (state stays) |
 | `/memoir pin [path]` | Groups a non-Git workspace and its subfolders (default current directory): each folder keeps its own notes, `reload` loads the whole group's, state stays per folder |
 | `/memoir unpin [path]` | Removes the group; every folder keeps its own notes |
@@ -129,6 +129,7 @@ For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all proje
 - When I say "resume" or start a session on unfinished work, run `/memoir reload`.
 - When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, and feedback for this reload.
 - To review the delegated task’s goal, blockers, and next action, run `/memoir reload` in its worktree. After the branch merges, use `/memoir adopt <key>` from the receiving worktree to bring those fragments into future reloads. The state snapshot stays with its original worktree.
+- When this repository is also cloned elsewhere (for example a central repo used by other projects), run `/memoir reload --peek` to list the other clones' notes, then `/memoir reload <clone_id>/<key>` to include one for this reload. Never adopt from another clone: `/memoir adopt` is only for merged worktrees of this clone.
 ```
 
 ## CLI
@@ -146,7 +147,7 @@ For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all proje
 | `scope` | Prints the wiki scope root (repository or pinned group), then each fragment directory it covers |
 | `archive <files>` | Moves fragments to `archive/` as `YYYYMMDD-<name>` and never overwrites |
 | `archive --superseded` | Archives every decision named on another decision's `Supersedes:` line, writing a `Superseded-By:` back-link into each archived copy |
-| `resume [--with <key>]...` | Prints the path and the files to load, `state-current.md` first, then sibling worktrees that have fragments; `--with` adds a sibling's fragments |
+| `resume [--peek] [--with <key>]...` | Prints the path and the files to load, `state-current.md` first, then sibling worktrees that have fragments; `--with` adds a sibling's fragments, or another clone's with `<clone_id>/<key>`; `--peek` lists other clones of the repo |
 | `adopt <key>` | Moves a sibling worktree's fragments into this scope, suffixing name collisions |
 
 For agents without shell access, run `memoir.py resume | pbcopy`, clear the chat, and paste.

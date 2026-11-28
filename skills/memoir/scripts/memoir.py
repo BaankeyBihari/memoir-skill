@@ -175,34 +175,72 @@ def fragments(scope: Path) -> list[Path]:
     return sorted(p for p in (scope / "active").glob("*.md") if ARCHIVABLE_RE.match(p.name))
 
 
-def sibling(store: Path, base_dir: Path, key: str) -> Path:
-    """Another paths/<key>/ of the same Git clone (FR-2.4, FR-2.9)."""
+def _plain_name(part: str) -> bool:
+    return part not in {"", ".", ".."} and Path(part).name == part
+
+
+def sibling(store: Path, base_dir: Path, key: str, other_clones: bool = False) -> Path:
+    """Another paths/<key>/ of the same Git clone, or with other_clones a `<clone_id>/<key>` of the repo (FR-2.4, FR-2.9)."""
+    in_git = base_dir.is_relative_to(store / "repos")
+    if other_clones and in_git and key.count("/") == 1:
+        clone_id, name = key.split("/")
+        path = base_dir.parents[2] / clone_id / "paths" / name
+        if not (_plain_name(clone_id) and _plain_name(name)) or path == base_dir or not path.is_dir():
+            raise ValueError(f"No clone path {key} in {base_dir.parents[3]}")
+        return path
     path = base_dir.parent / key
-    if (not base_dir.is_relative_to(store / "repos") or key in {"", ".", ".."} or Path(key).name != key
-            or path == base_dir or not path.is_dir()):
+    if not in_git or not _plain_name(key) or path == base_dir or not path.is_dir():
         raise ValueError(f"No sibling path {key} in {base_dir.parent.parent}")
     return path
 
 
-def print_siblings(store: Path, base_dir: Path) -> None:
-    if not base_dir.is_relative_to(store / "repos"):
-        return
+def _record_root(record: Path) -> tuple[str, str]:
+    """A clone.json or worktree.json root and whether it still exists: present, missing or unknown."""
+    try:
+        root = json.loads(record.read_text(encoding=UTF8))["root"]
+        return root, "present" if Path(root).is_dir() else "missing"
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unknown", "unknown"
+
+
+def _checkout_lines(paths_dir: Path, skip: Path | None) -> list[str]:
+    """One summary line per paths/<key>/ that has fragments, sorted by key."""
     lines = []
-    for path in sorted(p for p in base_dir.parent.iterdir() if p.is_dir() and p != base_dir):
+    for path in sorted(p for p in paths_dir.iterdir() if p.is_dir() and p != skip):
         found = fragments(path)
         if not found:
             continue
         count = {kind: sum(p.name.startswith(f"{kind}-") for p in found) for kind in ("decision", "log", "reference", "feedback")}
         newest = datetime.fromtimestamp(max(p.stat().st_mtime for p in found), UTC).astimezone().strftime("%Y-%m-%d")
-        try:
-            status = "present" if Path(json.loads((path / "worktree.json").read_text(encoding=UTF8))["root"]).is_dir() else "missing"
-        except (OSError, ValueError, KeyError, TypeError):
-            status = "unknown"
+        status = _record_root(path / "worktree.json")[1]
         lines.append(f"- {path.name}: {count['decision']} decisions, {count['log']} logs, {count['reference']} references, "
                      f"{count['feedback']} feedback; newest {newest}; worktree {status}")
+    return lines
+
+
+def print_siblings(store: Path, base_dir: Path) -> None:
+    if not base_dir.is_relative_to(store / "repos"):
+        return
+    lines = _checkout_lines(base_dir.parent, base_dir)
     if lines:
         print("\nSibling worktrees with fragments (not loaded; add with resume --with <key>):")
         print("\n".join(lines))
+
+
+def print_peek(store: Path, base_dir: Path) -> None:
+    """Other clones of the same repository, grouped per clone (FR-2.4 --peek)."""
+    if not base_dir.is_relative_to(store / "repos"):
+        return
+    clone = base_dir.parents[1]
+    blocks = []
+    for other in sorted(p for p in clone.parent.iterdir() if p.is_dir() and p != clone):
+        lines = _checkout_lines(other / "paths", None) if (other / "paths").is_dir() else []
+        if lines:
+            root, status = _record_root(other / "clone.json")
+            blocks += [f"clone {other.name}: root {root}, {status}", *(f"  {line}" for line in lines)]
+    if blocks:
+        print("\nOther clones with fragments (peek; add with resume --with <clone_id>/<key>):")
+        print("\n".join(blocks))
 
 
 def adopt(base_dir: Path, source: Path) -> None:
@@ -413,7 +451,7 @@ def archive_files(targets: list[tuple[str, Path]]):
         sys.exit(1)
 
 
-def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path]):
+def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path], peek: bool = False):
     state_file = base_dir / "active" / STATE_FILENAME
     files = [state_file] if state_file.exists() else []
     # Other group members' and siblings' state belongs to their own folders (FR-2.4).
@@ -429,6 +467,8 @@ def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path]):
             print(f"{idx}. {filepath.absolute()}")
         print("\nBased on the state file, resume the current task.")
     print_siblings(store_root(), base_dir)
+    if peek:
+        print_peek(store_root(), base_dir)
 
 
 def _orphan_missing_root(record: Path) -> str | None:
@@ -630,7 +670,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume_parser = subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
     resume_parser.add_argument("--with", dest="siblings", action="append", default=[], metavar="KEY",
-                               help="Also load a sibling worktree's fragments (repeatable)")
+                               help="Also load a sibling worktree's, or <clone_id>/<key> of another clone's, fragments (repeatable)")
+    resume_parser.add_argument("--peek", action="store_true", help="Also list other clones of this repository")
 
     adopt_parser = subparsers.add_parser("adopt", help="Move a sibling worktree's fragments into this scope")
     adopt_parser.add_argument("key", help="The sibling's paths/<key> folder name")
@@ -670,8 +711,8 @@ def _run_store_command(
     elif args.command == "prompt":
         generate_prompt(base_dir)
     elif args.command == "resume":
-        extra = [sibling(store, base_dir, key) for key in args.siblings]
-        generate_resume(base_dir, members_of(store, base_dir), extra)
+        extra = [sibling(store, base_dir, key, other_clones=True) for key in args.siblings]
+        generate_resume(base_dir, members_of(store, base_dir), extra, args.peek)
     elif args.command == "adopt":
         adopt(base_dir, sibling(store, base_dir, args.key))
 

@@ -11,4 +11,5 @@ Run `/memoir init` to install this block in the current project. For manual setu
 - When I say "resume" or start a session on unfinished work, run `/memoir reload`.
 - When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, and feedback for this reload.
 - To review the delegated task’s goal, blockers, and next action, run `/memoir reload` in its worktree. After the branch merges, use `/memoir adopt <key>` from the receiving worktree to bring those fragments into future reloads. The state snapshot stays with its original worktree.
+- When this repository is also cloned elsewhere (for example a central repo used by other projects), run `/memoir reload --peek` to list the other clones' notes, then `/memoir reload <clone_id>/<key>` to include one for this reload. Never adopt from another clone: `/memoir adopt` is only for merged worktrees of this clone.
 ```
