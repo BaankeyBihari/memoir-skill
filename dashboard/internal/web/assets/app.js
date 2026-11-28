@@ -365,7 +365,7 @@
     link.onclick = function (ev) {
       if (link.hash === globalThis.location.hash && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
         ev.preventDefault();
-        loadFile(node.path);
+        void loadFile(node.path);
       }
     };
 
