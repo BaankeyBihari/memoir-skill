@@ -6,8 +6,10 @@
 Layout per run: <iteration>/eval-<id>-<name>/<config>/run-1/{store,project,outputs}.
 """
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +38,23 @@ ONLY: set[int] = set()
 
 def text(p: Path) -> str:
     return p.read_text(encoding=UTF8) if p.is_file() else ""
+
+
+def fixture_scope(run: Path) -> Path:
+    cli = ROOT / "skills" / "memoir" / "scripts" / "memoir.py"
+    path = subprocess.check_output(
+        [sys.executable, cli, "path"], cwd=run / "project",
+        env={**os.environ, "MEMOIR_STORE": str(run / "store")}, text=True,
+    )
+    return Path(path.strip())
+
+
+def fixture_files(root: Path):
+    for directory, dirs, names in os.walk(root):
+        if ".git" in dirs:
+            dirs.remove(".git")
+        for name in sorted(names):
+            yield Path(directory) / name
 
 
 def field(doc: str, name: str) -> str:
@@ -129,7 +148,7 @@ def count_said(reply: str, n: int, kind: str) -> bool:
 
 # Each check: (assertion text, fn(run_dir, fixture_dir) -> (passed, evidence)).
 def checks_auto_decision(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     new = sorted(p for p in active.glob(DECISION_GLOB) if p.name != DECISION_SQLITE)
     d = text(new[0]) if new else ""
     name = new[0].name if new else "(none)"
@@ -146,7 +165,7 @@ def checks_auto_decision(run, fx):
 
 
 def checks_state(run, fx):
-    s = text(run / "store" / "active" / STATE_CURRENT_MD)
+    s = text(fixture_scope(run) / "active" / STATE_CURRENT_MD)
     sec = sections(s)
     want = ["Goal", "Completed", SEC_BLOCKED, SEC_NEXT_ACTION]
     return [
@@ -160,7 +179,7 @@ def checks_state(run, fx):
 
 
 def checks_coach(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     r = text(run / "outputs" / RESPONSE_MD)
     lines = [line.strip() for line in r.splitlines() if line.strip()]
     i = lines.index(CMD_CLEAR) if CMD_CLEAR in lines else -1
@@ -183,7 +202,8 @@ def checks_coach(run, fx):
 
 
 def checks_reload(run, fx):
-    active, archive = run / "store" / "active", run / "store" / "archive"
+    base = fixture_scope(run)
+    active, archive = base / "active", base / "archive"
     r = text(run / "outputs" / RESPONSE_MD)
     t = text(run / "outputs" / TRANSCRIPT_MD)
     archived = archive / f"{TODAY:%Y%m%d}-decision-use-session-cookies.md"
@@ -195,7 +215,7 @@ def checks_reload(run, fx):
         for n in re.findall(rf"(?:state-current|{DECISION_PREFIX}{KEBAB}|reference-{KEBAB}|log-{KEBAB})\.md", t)
         if n != "decision-use-session-cookies.md"
     ]
-    project_files = [str(p.relative_to(run)) for p in (run / "project").rglob("*") if p.is_file()]
+    project_files = [str(p.relative_to(run)) for p in fixture_files(run / "project")]
     return [
         ("Superseded decision moved to archive/YYYYMMDD-…", (archived.is_file() and not (active / archived.name[9:]).exists(), str(sorted(p.name for p in archive.glob("*"))))),
         ("Other fragments untouched", (not changed, f"changed: {changed}")),
@@ -208,8 +228,21 @@ def checks_reload(run, fx):
     ]
 
 
+def checks_wiki_lag(run, fx):
+    r = text(run / "outputs" / RESPONSE_MD)
+    wiki = fixture_scope(run).parents[3] / "wiki"
+    return [
+        *checks_reload(run, fx),
+        ("Reports the CLI wiki lag", ("Wiki: 5 pending fragment changes (5 new); run /memoir-wiki ingest" in r, r)),
+        ("Wiki and watermark untouched", (
+            sorted(p.name for p in wiki.iterdir()) == [".ingest-state.json", "index.md"]
+            and text(wiki / "index.md") == "# Wiki Index\n"
+            and text(wiki / ".ingest-state.json") == '{"fragments":{}}\n', str(wiki))),
+    ]
+
+
 def checks_trivial(run, fx):
-    decisions = [p.name for p in (run / "store" / "active").glob(DECISION_GLOB)]
+    decisions = [p.name for p in (fixture_scope(run) / "active").glob(DECISION_GLOB)]
     u = text(run / "project" / "users.py")
     return [
         ("(proposed) No decision fragment for a parameter-naming choice", (not decisions, str(decisions))),
@@ -228,7 +261,7 @@ def checks_reload_no_uv(run, fx):
 
 
 def checks_slug_collision(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     old = "decision-use-redis-cache.md"
     new = sorted(p for p in active.glob(DECISION_GLOB) if p.name != old)
     d = text(new[0]) if new else ""
@@ -242,7 +275,7 @@ def checks_slug_collision(run, fx):
 
 
 def checks_coach_continue(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     r = text(run / "outputs" / RESPONSE_MD)
     s = text(active / STATE_CURRENT_MD)
     return [
@@ -250,18 +283,19 @@ def checks_coach_continue(run, fx):
         ("Next: line follows Captured:", (bool(re.search(r"^Captured:.*\n\s*Next: \S", r, re.M)), next((line for line in r.splitlines() if line.startswith("Next:")), MISSING))),
         (f"No {CMD_CLEAR}, /compact or /memoir reload", (not re.search(r"^\s*/(?:clear|compact|memoir reload)\b", r, re.M), "")),
         ("State updated with the Export button as next action", ("button" in " ".join(sections(s).get(SEC_NEXT_ACTION, [])).lower(), str(sections(s).get(SEC_NEXT_ACTION)))),
-        ("Nothing archived", (not any((run / "store" / "archive").iterdir()), "")),
+        ("Nothing archived", (not any((fixture_scope(run) / "archive").iterdir()), "")),
     ]
 
 
 def checks_capture(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     r = text(run / "outputs" / RESPONSE_MD)
     decisions = sorted(p for p in active.glob(DECISION_GLOB) if p.name != DECISION_PNPM)
     logs, refs = sorted(active.glob("log-*.md")), sorted(active.glob("reference-*.md"))
     d = text(decisions[0]) if decisions else ""
     s = text(active / STATE_CURRENT_MD)
-    blocked = " ".join(sections(s).get(SEC_BLOCKED, [])).lower()
+    pending = sections(s)
+    blocked = " ".join(pending.get(SEC_BLOCKED, []) + pending.get(SEC_NEXT_ACTION, [])).lower()
     return [
         ("Exactly one new decision, about Vitest", (len(decisions) == 1 and "vitest" in field(d, "Decision").lower(), str([p.name for p in decisions]))),
         ("No duplicate pnpm decision", (not any("pnpm" in text(p).lower().split("alternatives:")[0] for p in decisions), "")),
@@ -275,7 +309,7 @@ def checks_capture(run, fx):
 
 
 def checks_coach_compact(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     r = text(run / "outputs" / RESPONSE_MD)
     compact = [line.strip() for line in r.splitlines() if line.strip().startswith("/compact")]
     focus = compact[0].lower() if compact else ""
@@ -290,7 +324,7 @@ def checks_coach_compact(run, fx):
 
 
 def checks_coach_friction(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     r = text(run / "outputs" / RESPONSE_MD)
     lines = [line.strip() for line in r.splitlines() if line.strip()]
     i = lines.index(CMD_CLEAR) if CMD_CLEAR in lines else -1
@@ -311,7 +345,7 @@ def checks_coach_friction(run, fx):
 
 
 def checks_capture_feedback(run, fx):
-    active = run / "store" / "active"
+    active = fixture_scope(run) / "active"
     r = text(run / "outputs" / RESPONSE_MD)
     old = "feedback-imperative-commits.md"
     feedback = sorted(p for p in active.glob("feedback-*.md") if p.name != old)
@@ -334,7 +368,7 @@ def checks_capture_feedback(run, fx):
 def checks_no_write_access(run, fx):
     r = text(run / "outputs" / RESPONSE_MD)
     t = text(run / "outputs" / TRANSCRIPT_MD)
-    written = [str(p.relative_to(run)) for base in ("store", "project") for p in (run / base).rglob("*") if p.is_file()]
+    written = [str(p.relative_to(run)) for base in ("store", "project") for p in fixture_files(run / base)]
     candidate_lines = "\n".join(
         line
         for line in r.splitlines()
@@ -365,6 +399,7 @@ CHECKS = {
     11: checks_coach_friction,
     12: checks_capture_feedback,
     13: checks_no_write_access,
+    14: checks_wiki_lag,
 }
 
 
@@ -378,9 +413,21 @@ def run_dirs(iteration: Path):
 def setup(iteration: Path):
     for e, eval_dir, run in run_dirs(iteration):
         fx = ROOT / e["files"][0]
-        shutil.copytree(fx, run / "store", ignore=shutil.ignore_patterns(".gitkeep"))
-        (run / "store" / "archive").mkdir()
-        (run / "project").mkdir()
+        (run / "project").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(run / "project")], check=True)
+        base = fixture_scope(run)
+        shutil.copytree(fx, base, ignore=shutil.ignore_patterns(".gitkeep"))
+        (base / "archive").mkdir(exist_ok=True)
+        if e["id"] == 6:
+            (run / "bin").mkdir()
+            (run / "bin" / "python3").symlink_to(sys.executable)
+        if e["id"] == 14:
+            root = base.parents[3]
+            wiki = root / "wiki"
+            wiki.mkdir()
+            (wiki / ".ingest-state.json").write_text('{"fragments":{}}\n', encoding=UTF8)
+            (wiki / "index.md").write_text("# Wiki Index\n", encoding=UTF8)
+            (root / "meta.json").write_text('{"sync_to_repo":true}\n', encoding=UTF8)
         (run / "outputs").mkdir()
         names = [c[0] for c in CHECKS[e["id"]](run, fx)]
         meta = {"eval_id": e["id"], "eval_name": e["name"], "prompt": e["prompt"], "assertions": names}
@@ -392,7 +439,7 @@ def setup(iteration: Path):
 def dump_files(run: Path) -> str:
     out = []
     for base in ("store", "project"):
-        for p in sorted((run / base).rglob("*")):
+        for p in sorted(fixture_files(run / base)):
             if p.is_file():
                 body = p.read_text(encoding=UTF8, errors="replace") if p.suffix in (".md", ".py", "") else f"({p.stat().st_size} bytes)"
                 out.append(f"## {p.relative_to(run)}\n\n```\n{body}\n```\n")
@@ -401,7 +448,9 @@ def dump_files(run: Path) -> str:
 
 def grade(iteration: Path):
     for e, _, run in run_dirs(iteration):
-        if not run.is_dir():
+        if not text(run / "outputs" / RESPONSE_MD).strip():
+            (run / "grading.json").unlink(missing_ok=True)
+            print(f"{run.parent.parent.name}/{run.parent.name}: not run")
             continue
         results = CHECKS[e["id"]](run, ROOT / e["files"][0])
         exps = [{"text": t, "passed": bool(ok), "evidence": ev} for t, (ok, ev) in results]

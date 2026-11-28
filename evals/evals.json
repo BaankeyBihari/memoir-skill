@@ -39,7 +39,7 @@
     {
       "id": 6,
       "name": "reload-without-uv",
-      "prompt": "[New session, no earlier conversation. This machine has no `uv`: prefix every shell command with `PATH=/usr/bin:/bin`.]\nUser: /memoir reload",
+      "prompt": "[New session, no earlier conversation. This machine has no `uv`: prefix every shell command with `PATH=../bin:/usr/bin:/bin`.]\nUser: /memoir reload",
       "expected_output": "Same as eval 4, but reload works on the first try with no uv on PATH: no `uv run` attempt and no 'command not found'.",
       "files": ["evals/fixtures/reload-restores-session"]
     },
@@ -93,6 +93,13 @@
           "files": [
                 "evals/fixtures/store-no-write-access"
           ]
+    },
+    {
+      "id": 14,
+      "name": "reload-wiki-lag",
+      "prompt": "[New session, no earlier conversation]\nUser: /memoir reload",
+      "expected_output": "Restores the session and relays wiki lag. Wiki pages, watermark and mirror remain untouched.",
+      "files": ["evals/fixtures/reload-restores-session"]
     }
   ]
 }

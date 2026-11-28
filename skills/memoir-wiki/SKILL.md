@@ -43,26 +43,7 @@ Confirm each page written in one line with its path relative to the wiki root. W
 ### `/memoir-wiki ingest`
 Fold new and changed fragments into the wiki (FR-4.2). Ingest is incremental: the watermark in `wiki/.ingest-state.json` (format in `references/schema.md`) makes rerunning it cheap and safe.
 
-1. List what changed. Run this with the `memoir.py` path from **Wiki Root**; it reads `memoir.py scope` itself:
-
-       python3 - "<this-skill-dir>/../memoir/scripts/memoir.py" <<'PY'
-       import hashlib, json, os, re, subprocess, sys
-       from pathlib import Path
-       root, *dirs = map(Path, subprocess.check_output([sys.executable, sys.argv[1], "scope"], text=True).splitlines())
-       state = root / "wiki" / ".ingest-state.json"
-       seen = json.loads(state.read_text())["fragments"] if state.is_file() else {}
-       name = re.compile(r"(\d{8}-)?(decision|log|reference|feedback)-[a-z0-9-]+\.md")
-       now = {}
-       for path in sorted(p for d in dirs for sub in ("active", "archive") for p in (d / sub).glob("*.md")):
-           if name.fullmatch(path.name):
-               now[Path(os.path.relpath(path, root)).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-       for rel, digest in now.items():
-           old = seen.get(rel, {}).get("sha256")
-           if old != digest:
-               print("new" if old is None else "changed", digest, rel)
-       for rel in sorted(seen.keys() - now.keys()):
-           print("missing", "-", rel)
-       PY
+1. List what changed with `python3 <this-skill-dir>/../memoir/scripts/memoir.py wiki-diff`.
 
    It covers `active/` and `archive/` of every directory `scope` prints: each clone path of a repository, or each member folder of a pinned group (keyed relative to the scope root, e.g. `../../standalone/<slug>/active/...`). It skips files whose relative path and SHA-256 match the watermark, and it skips `state-current.md`, which is a session snapshot rather than knowledge. Each output line is `new`, `changed` or `missing`, then the hash, then the path. No lines means the wiki is current: reply "Wiki is up to date." and stop.
 2. Read each `new` and `changed` fragment. For `changed`, also read the pages its watermark entry lists. Read `index.md` and every page you're about to touch before editing it, so you merge with what's there rather than overwrite it.

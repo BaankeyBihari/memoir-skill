@@ -126,7 +126,7 @@ For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all proje
 - Record milestones and blocking errors with `/memoir log`, and external paths or docs with `/memoir reference`.
 - When I state a standing preference for how we work (communication, review, structure), record it with `/memoir feedback`.
 - After finishing a task step, or before the context gets long, update `/memoir state`.
-- When I say "resume" or start a session on unfinished work, run `/memoir reload`.
+- When I say "resume" or start a session on unfinished work, run `/memoir reload`. Report any wiki lag it prints so I can choose when to ingest.
 - When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, and feedback for this reload.
 - To review the delegated task’s goal, blockers, and next action, run `/memoir reload` in its worktree. After the branch merges, use `/memoir adopt <key>` from the receiving worktree to bring those fragments into future reloads. The state snapshot stays with its original worktree.
 - When this repository is also cloned elsewhere (for example a central repo used by other projects), run `/memoir reload --peek` to list the other clones' notes, then `/memoir reload <clone_id>/<key>` to include one for this reload. Never adopt from another clone: `/memoir adopt` is only for merged worktrees of this clone.
@@ -147,6 +147,7 @@ For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all proje
 | `scope` | Prints the wiki scope root (repository or pinned group), then each fragment directory it covers |
 | `archive <files>` | Moves fragments to `archive/` as `YYYYMMDD-<name>` and never overwrites |
 | `archive --superseded` | Archives every decision named on another decision's `Supersedes:` line, writing a `Superseded-By:` back-link into each archived copy |
+| `wiki-diff` | Lists new, changed and missing wiki sources across the current repository or pinned group |
 | `resume [--peek] [--with <key>]...` | Prints the path and the files to load, `state-current.md` first, then sibling worktrees that have fragments; `--with` adds a sibling's fragments, or another clone's with `<clone_id>/<key>`; `--peek` lists other clones of the repo |
 | `adopt <key>` | Moves a sibling worktree's fragments into this scope, suffixing name collisions |
 
