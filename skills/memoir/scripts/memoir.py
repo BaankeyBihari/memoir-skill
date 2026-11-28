@@ -163,7 +163,8 @@ def resolve_store(store: Path, record: bool) -> Path:
     elif toplevel.is_relative_to(root):
         key = "__".join(toplevel.relative_to(root).parts)
     else:
-        key = toplevel.name
+        # Hashed so same-named external worktrees, or one named `_main`, never share a folder (FR-1.3).
+        key = scope_id(toplevel, toplevel)
     if record:
         record_scope(clone / "paths" / key / "worktree.json", toplevel)
     return clone / "paths" / key
@@ -241,7 +242,7 @@ def check_access(base_dir: Path) -> None:
         sys.exit(3)
 
 
-def _legacy_candidates(cwd: Path, top: str) -> list[Path]:
+def _legacy_candidates(cwd: Path, top: str, base_dir: Path) -> list[Path]:
     root = Path(top).resolve() if top else cwd
     config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     digest = hashlib.sha256(str(cwd).encode()).hexdigest()[:8]
@@ -251,6 +252,15 @@ def _legacy_candidates(cwd: Path, top: str) -> list[Path]:
         candidates.append(group[1] / "paths" / ("__".join(cwd.relative_to(group[0]).parts) or "_root"))
     if top:  # notes written before this folder became a Git repo
         candidates.append(store_root() / "standalone" / scope_id(cwd, cwd))
+    if top and base_dir.name == scope_id(root, root):  # external worktree keyed by basename before FR-1.3 hashed it
+        old = base_dir.parent / root.name
+        record = old / "worktree.json"
+        try:
+            owner = json.loads(record.read_text(encoding=UTF8))["root"] if record.exists() else str(root)
+        except (OSError, ValueError, KeyError, TypeError):
+            owner = None
+        if owner == str(root):  # never copy in another worktree's notes
+            candidates.append(old)
     return candidates
 
 
@@ -274,7 +284,7 @@ def migrate_legacy(base_dir: Path) -> None:
     """Copy a v1 store into an empty v2 scope, leaving the original in place (FR-1.7)."""
     cwd = Path.cwd().resolve()
     top = git_output(GIT_REV_PARSE, FLAG_SHOW_TOPLEVEL)
-    candidates = _legacy_candidates(cwd, top)
+    candidates = _legacy_candidates(cwd, top, base_dir)
     legacy = next((c for c in candidates if (c / "active").is_dir() or (c / "archive").is_dir()), None)
     if legacy is None:
         return
