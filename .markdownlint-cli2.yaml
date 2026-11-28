@@ -16,6 +16,7 @@ ignores:
   - ".claude/**"
   - ".agents/**"
   - ".pytest_cache/**"
+  - ".venv/**"
   - "dist/**"
   - "evals/fixtures/**"
   - "memoir-workspace/**"

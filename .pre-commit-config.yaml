@@ -37,7 +37,7 @@ repos:
         entry: markdownlint-cli2
         language: system
         files: \.md$
-        exclude: ^(\.claude/|\.agents/|\.pytest_cache/|dist/|evals/fixtures/|memoir-workspace/|node_modules/)
+        exclude: ^(\.claude/|\.agents/|\.pytest_cache/|\.venv/|dist/|evals/fixtures/|memoir-workspace/|node_modules/)
       - id: typos
         name: typos
         entry: typos

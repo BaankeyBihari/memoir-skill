@@ -1,5 +1,0 @@
-target-version = "py311"
-
-[lint]
-select = ["E", "F", "I", "DTZ", "PLW"]
-ignore = ["E501"]

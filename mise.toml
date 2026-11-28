@@ -1,6 +1,7 @@
 [tools]
 go = "1.27"
 python = "3.11"
+uv = "latest"
 node = "lts"
 golangci-lint = "latest"
 ruff = "latest"
@@ -11,6 +12,11 @@ pre-commit = "latest"
 
 [env]
 VERSION = "dev"
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.venv]
+description = "Create .venv and sync Python dev dependencies from pyproject.toml"
+run = "uv sync"
 
 [tasks.build]
 description = "Build static memoir-ui binary into dist/memoir-ui"
