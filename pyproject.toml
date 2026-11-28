@@ -18,7 +18,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["scripts"]
+testpaths = ["test_memoir.py", "scripts"]
 python_files = ["test_*.py"]
 
 [tool.ruff]
