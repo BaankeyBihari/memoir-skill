@@ -358,11 +358,16 @@
   }
 
   function createFileItem(node) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tree-file-btn' + (activeFilePath === node.path ? ' active' : '');
-    btn.title = node.path;
-    btn.onclick = function () { navigateToFile(node.path); };
+    const link = document.createElement('a');
+    link.href = HASH_FILE_PREFIX + encodeURIComponent(node.path);
+    link.className = 'tree-file-btn' + (activeFilePath === node.path ? ' active' : '');
+    link.title = node.path;
+    link.onclick = function (ev) {
+      if (link.hash === globalThis.location.hash && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
+        ev.preventDefault();
+        loadFile(node.path);
+      }
+    };
 
     const kind = document.createElement('span');
     kind.className = 'kind-dot kind-' + (node.kind || 'other');
@@ -372,9 +377,9 @@
     lbl.className = 'tree-label';
     lbl.textContent = formatTreeFileLabel(node);
 
-    btn.appendChild(kind);
-    btn.appendChild(lbl);
-    return btn;
+    link.appendChild(kind);
+    link.appendChild(lbl);
+    return link;
   }
 
   function appendWikiBranch(container, scopeKey, wiki) {
@@ -959,7 +964,7 @@
     renderBacklinks(doc);
   }
 
-  async function loadFile(relPath) {
+  async function loadFile(relPath, scrollToStart = true) {
     if (!relPath) {
       activeFilePath = '';
       showOverviewView();
@@ -973,6 +978,7 @@
       const res = await fetch('/api/file?path=' + encodeURIComponent(relPath));
       if (!res.ok) {
         const err = await res.json().catch(function () { return {}; });
+        if (activeFilePath !== relPath) return;
         showToast(err.error || 'Failed to open file', 'error');
         if (res.status === 404) {
           showOverviewView();
@@ -980,9 +986,11 @@
         return;
       }
       const doc = await res.json();
+      if (activeFilePath !== relPath) return;
       showDocumentView(doc);
+      if (scrollToStart) globalThis.scrollTo(0, 0);
     } catch {
-      showToast('Failed to load file', 'error');
+      if (activeFilePath === relPath) showToast('Failed to load file', 'error');
     }
   }
 
@@ -1371,7 +1379,7 @@
   async function refreshAll() {
     await Promise.all([refreshTree(), refreshOrphans()]);
     if (activeFilePath) {
-      await loadFile(activeFilePath);
+      await loadFile(activeFilePath, false);
     }
   }
 
