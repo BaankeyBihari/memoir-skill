@@ -196,11 +196,15 @@ def sibling(store: Path, base_dir: Path, key: str, other_clones: bool = False) -
 
 def _record_root(record: Path) -> tuple[str, str]:
     """A clone.json or worktree.json root and whether it still exists: present, missing or unknown."""
+    # Validated like gc's records: no linked record, and only an absolute string root is checked on disk.
     try:
-        root = json.loads(record.read_text(encoding=UTF8))["root"]
-        return root, "present" if Path(root).is_dir() else "missing"
-    except (OSError, ValueError, KeyError, TypeError):
+        metadata = None if record.resolve() != record else json.loads(record.read_text(encoding=UTF8))
+    except (OSError, ValueError):
+        metadata = None
+    root = metadata.get("root") if isinstance(metadata, dict) else None
+    if not isinstance(root, str) or not Path(root).is_absolute():
         return "unknown", "unknown"
+    return root, "present" if Path(root).is_dir() else "missing"
 
 
 def _checkout_lines(paths_dir: Path, skip: Path | None) -> list[str]:

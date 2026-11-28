@@ -617,6 +617,7 @@ def test_peek_other_clones() -> None:
         for frag in (base["b"] / "active" / DECISION_B, base["b_wt"] / "active" / LOG_X, base["d"] / "active" / FEEDBACK_Y):
             os.utime(frag, (1767225600, 1767225600))
         shutil.rmtree(tmp / "d")  # clone d is gone; c has no fragments and is omitted
+        (base["b_wt"] / "worktree.json").write_text('{"root": "relative/spike", "last_seen": "x"}\n', encoding=UTF8)
         day = datetime.fromtimestamp(1767225600, UTC).astimezone().strftime(FMT_DATE)
 
         plain = run_cli(clones["a"], env, CMD_RESUME).stdout
@@ -627,7 +628,7 @@ def test_peek_other_clones() -> None:
             clone_id["b"]: [
                 f"clone {clone_id['b']}: root {clones['b']}, present",
                 f"  - _main: 1 decisions, 0 logs, 0 references, 0 feedback; newest {day}; worktree present",
-                f"  - {base['b_wt'].name}: 0 decisions, 1 logs, 0 references, 0 feedback; newest {day}; worktree present",
+                f"  - {base['b_wt'].name}: 0 decisions, 1 logs, 0 references, 0 feedback; newest {day}; worktree unknown",
             ],
             clone_id["d"]: [
                 f"clone {clone_id['d']}: root {clones['d']}, missing",
