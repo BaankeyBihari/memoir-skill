@@ -1,6 +1,7 @@
 """Self-check for skills/memoir/scripts/memoir.py. Run: python3 test_memoir.py."""
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -138,6 +139,62 @@ def test_init_resume_and_archive() -> None:
 
         home_store = run_store(Path("~/memoir-test-x"), "path").stdout.strip()
         assert Path(home_store).is_relative_to(Path.home() / "memoir-test-x"), home_store
+
+
+def test_wiki_diff_and_lag() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve()
+        work = root / "work"
+        work.mkdir()
+        store = root / "store"
+        env = {**os.environ, ENV_MEMOIR_STORE: str(store)}
+        def cli(*args):
+            return run_cli(work, env, *args, check=True).stdout
+
+        assert not cli("wiki-diff") and not store.exists()
+        run_git("init", "-q", work)
+        assert not cli("wiki-diff") and not store.exists()
+        cli("init")
+        scope, base = map(Path, cli("scope").splitlines())
+        archived = base / "archive" / "20260101-log-note.md"
+        archived.write_bytes(b"note")
+        other = scope / "clones" / "other" / "paths" / "_main" / "active"
+        other.mkdir(parents=True)
+        shared = other / "reference-doc.md"
+        shared.write_bytes(b"doc")
+        for name in ("state-current.md", "task-open.md"):
+            (other / name).write_bytes(b"ignore")
+        assert "Wiki:" not in cli("resume")
+        wiki = scope / "wiki"
+        wiki.mkdir()
+        rows = [(str(p.relative_to(scope)), hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted([archived, shared])]
+        assert cli("wiki-diff").splitlines() == [f"new {h} {key}" for key, h in rows]
+        assert "No recorded session" in cli("resume") and "(2 new)" in cli("resume")
+        seen = {key: {"sha256": h, "pages": []} for key, h in rows}
+        mark = wiki / ".ingest-state.json"
+        mark.write_text(json.dumps({"fragments": seen}))
+        assert cli("wiki-diff") == "" and "Wiki:" not in cli("resume")
+        shared.write_bytes(b"update")
+        archived.unlink()
+        assert cli("wiki-diff").splitlines() == [
+            f"changed {hashlib.sha256(b'update').hexdigest()} {shared.relative_to(scope)}",
+            f"missing - {archived.relative_to(scope)}",
+        ]
+        assert "(1 changed, 1 missing)" in cli("resume")
+        shared.write_bytes(b"doc")
+        assert "(1 missing)" in cli("resume")
+        mark.write_text("[]")
+        assert run_cli(work, env, "wiki-diff").returncode == 1
+        assert "No recorded session" in cli("resume")
+
+        member = root / "member"
+        member.mkdir()
+        run_cli(member, env, "pin", root, check=True)
+        run_cli(member, env, "init", check=True)
+        group, folder = map(Path, run_cli(member, env, "scope", check=True).stdout.splitlines())
+        log = folder / "active" / LOG_X
+        log.write_bytes(b"x")
+        assert run_cli(member, env, "wiki-diff", check=True).stdout.strip().endswith(os.path.relpath(log, group))
 
 
 def test_docs_and_skill_invariants() -> None:
@@ -655,6 +712,7 @@ def test_peek_other_clones() -> None:
 
 def main() -> None:
     test_init_resume_and_archive()
+    test_wiki_diff_and_lag()
     test_docs_and_skill_invariants()
     test_project_init_blocks_and_adoption()
     test_project_init_claude_symlink_and_pinned()

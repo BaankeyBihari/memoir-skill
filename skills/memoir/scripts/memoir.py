@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -470,6 +471,7 @@ def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path], peek:
         for idx, filepath in enumerate(files, 1):
             print(f"{idx}. {filepath.absolute()}")
         print("\nBased on the state file, resume the current task.")
+    print_wiki_lag(store_root(), base_dir)
     print_siblings(store_root(), base_dir)
     if peek:
         print_peek(store_root(), base_dir)
@@ -502,19 +504,59 @@ def collect_orphans(store: Path, prune: bool) -> None:
                 shutil.rmtree(record.parent)
 
 
-def print_scope(store: Path, base_dir: Path) -> None:
-    """Wiki scope root, then each fragment directory it compiles (FR-2.8)."""
+def wiki_scope(store: Path, base_dir: Path) -> tuple[Path, list[Path]] | None:
+    """Wiki scope root and its fragment directories (FR-2.8)."""
     if base_dir.is_relative_to(store / "repos"):
         repo = base_dir.parents[3]
-        print(repo)
-        for path in sorted(repo.glob("clones/*/paths/*")):
-            print(path)
-        return
+        return repo, sorted(repo.glob("clones/*/paths/*"))
     group = group_of(store, Path.cwd().resolve())
-    if group:
-        print(group[1])
-        for scope in members_of(store, base_dir):
-            print(scope)
+    return (group[1], members_of(store, base_dir)) if group else None
+
+
+def wiki_diff(root: Path, dirs: list[Path]):
+    state = root / "wiki" / ".ingest-state.json"
+    watermark = json.loads(state.read_text(encoding=UTF8)) if state.is_file() else {"fragments": {}}
+    seen = watermark.get("fragments") if isinstance(watermark, dict) else None
+    if not isinstance(seen, dict) or not all(isinstance(entry, dict) for entry in seen.values()):
+        raise ValueError(f"Invalid fragment watermark: {state}")
+    missing = set(seen)
+    for path in sorted(p for d in dirs for sub in ("active", "archive") for p in (d / sub).glob("*.md")):
+        if not re.fullmatch(r"(\d{8}-)?(decision|log|reference|feedback)-[a-z0-9-]+\.md", path.name):
+            continue
+        rel = os.path.relpath(path, root)
+        missing.discard(rel)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        old = seen.get(rel, {}).get("sha256")
+        if digest != old:
+            yield ("new" if old is None else "changed"), digest, rel
+    for rel in sorted(missing):
+        yield "missing", "-", rel
+
+
+def print_wiki_scope(store: Path, base_dir: Path, command: str):
+    scope = wiki_scope(store, base_dir)
+    if scope is None:
+        return
+    if command == "scope":
+        print(scope[0], *scope[1], sep="\n")
+    else:
+        for row in wiki_diff(*scope):
+            print(*row)
+
+
+def print_wiki_lag(store: Path, base_dir: Path):
+    scope = wiki_scope(store, base_dir)
+    if not scope or not (scope[0] / "wiki").is_dir():
+        return
+    try:
+        counts = Counter(kind for kind, _, _ in wiki_diff(*scope))
+    except (ValueError, OSError) as error:
+        print(f"[Memoir] Cannot read wiki lag: {error}", file=sys.stderr)
+        return
+    if counts:
+        details = ", ".join(f"{counts[k]} {k}" for k in ("new", "changed", "missing") if counts[k])
+        noun = "change" if counts.total() == 1 else "changes"
+        print(f"Wiki: {counts.total()} pending fragment {noun} ({details}); run /memoir-wiki ingest")
 
 
 def instruction_lines(lines: list[str]):
@@ -672,6 +714,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("scope", help="Print the wiki scope root and the fragment directories it covers")
     subparsers.add_parser("prompt", help="Print the absolute path instruction for LLM injection")
 
+    subparsers.add_parser("wiki-diff", help="List new, changed and missing wiki sources")
+
     resume_parser = subparsers.add_parser("resume", help="Generate the exact prompt to load active files for the next session")
     resume_parser.add_argument("--with", dest="siblings", action="append", default=[], metavar="KEY",
                                help="Also load a sibling worktree's, or <clone_id>/<key> of another clone's, fragments (repeatable)")
@@ -699,8 +743,8 @@ def _run_store_command(
 ) -> None:
     if args.command == "path":
         print(base_dir.absolute())
-    elif args.command == "scope":
-        print_scope(store, base_dir)
+    elif args.command in {"scope", "wiki-diff"}:
+        print_wiki_scope(store, base_dir, args.command)
     elif args.command == "init":
         init_store(base_dir)
     elif args.command == "archive":
@@ -736,7 +780,7 @@ def main() -> None:
     if args.command in {"pin", "unpin"}:
         update_pin(store, args.directory.expanduser().resolve(), args.command == "pin")
         return
-    read_only = args.command in {"path", "scope"}
+    read_only = args.command in {"path", "scope", "wiki-diff"}
     base_dir = resolve_store(store, not read_only)
     if not read_only:
         check_access(base_dir)
