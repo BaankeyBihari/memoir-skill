@@ -526,10 +526,11 @@ def test_sibling_worktrees_and_adopt() -> None:
         assert files == [str(active_dirs[main_wt] / n) for n in (STATE_FILE, DECISION_A)] + [
             str(active_dirs[feat_wt] / n) for n in (DECISION_A, DECISION_B, FEEDBACK_Y, LOG_X)
         ], files
-        for bad_key in ("_main", "nope", "..", "wt__feat/active", ""):
+        for bad_key in ("_main", "nope", "..", ""):
             err = run_cli(main_wt, env, CMD_RESUME, FLAG_WITH, bad_key)
             assert err.returncode == 1
             assert f"No sibling path {bad_key} in " in err.stderr
+        assert "No clone path wt__feat/active in " in run_cli(main_wt, env, CMD_RESUME, FLAG_WITH, "wt__feat/active").stderr
         assert run_cli(tmp, env, "adopt", "x").returncode == 1
 
         adopt_out = run_cli(main_wt, env, "adopt", "wt__feat", check=True)
@@ -589,6 +590,68 @@ def test_external_worktree_keys() -> None:
         assert f"Migrated 1 files from {old} to {base[c_wt]}" in run_cli(c_wt, env, CMD_RESUME).stderr
 
 
+def test_peek_other_clones() -> None:
+    """FR-2.4 --peek: other clones of the repo are listed per clone and loadable as <clone_id>/<key>; never adopted."""
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw).resolve()
+        env = {**os.environ, "HOME": str(tmp), ENV_MEMOIR_STORE: "", "XDG_CONFIG_HOME": str(tmp / "xdg")}
+        clones = {name: tmp / name / "app" for name in ("a", "b", "c", "d")}
+        for root in clones.values():
+            run_git("init", "-q", root)
+            run_git("-C", root, "remote", "add", "origin", "https://example.com/o/app.git")
+        run_git("-C", clones["b"], "commit", "-q", "--allow-empty", "-m", "init")
+        b_wt = tmp / "b" / "spike"
+        run_git("-C", clones["b"], "worktree", "add", "-q", "--detach", b_wt)
+        base = {name: Path(run_cli(root, env, "path").stdout.strip()) for name, root in clones.items()}
+        base["b_wt"] = Path(run_cli(b_wt, env, "path").stdout.strip())
+        for name, root in [*clones.items(), ("b_wt", b_wt)]:
+            assert run_cli(root, env, "init").returncode == 0, name
+        clone_id = {name: base[name].parents[1].name for name in clones}
+        assert len(set(clone_id.values())) == len(clones) and len({base[n].parents[2] for n in clones}) == 1
+
+        (base["a"] / "active" / DECISION_A).write_text(HDR_SUPERSEDES_NONE, encoding=UTF8)
+        (base["b"] / "active" / STATE_FILE).write_text("# b\n", encoding=UTF8)
+        (base["b"] / "active" / DECISION_B).write_text(HDR_SUPERSEDES_NONE, encoding=UTF8)
+        (base["b_wt"] / "active" / LOG_X).write_text("x\n", encoding=UTF8)
+        (base["d"] / "active" / FEEDBACK_Y).write_text("y\n", encoding=UTF8)
+        for frag in (base["b"] / "active" / DECISION_B, base["b_wt"] / "active" / LOG_X, base["d"] / "active" / FEEDBACK_Y):
+            os.utime(frag, (1767225600, 1767225600))
+        shutil.rmtree(tmp / "d")  # clone d is gone; c has no fragments and is omitted
+        day = datetime.fromtimestamp(1767225600, UTC).astimezone().strftime(FMT_DATE)
+
+        plain = run_cli(clones["a"], env, CMD_RESUME).stdout
+        assert "Other clones" not in plain and "Sibling" not in plain, plain  # other clones' checkouts are never siblings
+        peek = run_cli(clones["a"], env, CMD_RESUME, "--peek").stdout
+        head = "Other clones with fragments (peek; add with resume --with <clone_id>/<key>):"
+        expected = {
+            clone_id["b"]: [
+                f"clone {clone_id['b']}: root {clones['b']}, present",
+                f"  - _main: 1 decisions, 0 logs, 0 references, 0 feedback; newest {day}; worktree present",
+                f"  - {base['b_wt'].name}: 0 decisions, 1 logs, 0 references, 0 feedback; newest {day}; worktree present",
+            ],
+            clone_id["d"]: [
+                f"clone {clone_id['d']}: root {clones['d']}, missing",
+                f"  - _main: 0 decisions, 0 logs, 0 references, 1 feedback; newest {day}; worktree missing",
+            ],
+        }
+        assert peek.split(head)[1].strip().splitlines() == [line for k in sorted(expected) for line in expected[k]], peek
+
+        loaded = run_cli(clones["a"], env, CMD_RESUME, FLAG_WITH, f"{clone_id['b']}/_main").stdout
+        files = [line.split(". ", 1)[1] for line in loaded.splitlines() if line[:1].isdigit()]
+        assert files == [str(base["a"] / "active" / DECISION_A), str(base["b"] / "active" / DECISION_B)], files
+        for bad in (f"{clone_id['b']}/nope", "nope/_main", f"{clone_id['a']}/_main", f"..{'/'}_main", f"{clone_id['b']}/.."):
+            err = run_cli(clones["a"], env, CMD_RESUME, FLAG_WITH, bad)
+            assert err.returncode == 1 and f"No clone path {bad} in {base['a'].parents[3]}" in err.stderr, (bad, err)
+        err = run_cli(clones["a"], env, "adopt", f"{clone_id['b']}/_main")
+        assert err.returncode == 1 and "No sibling path" in err.stderr, err
+        assert (base["b"] / "active" / DECISION_B).exists()
+
+        outside = tmp / "plain"
+        outside.mkdir()
+        out = run_cli(outside, env, CMD_RESUME, "--peek")
+        assert out.returncode == 0 and "Other clones" not in out.stdout, out
+
+
 def main() -> None:
     test_init_resume_and_archive()
     test_docs_and_skill_invariants()
@@ -600,6 +663,7 @@ def main() -> None:
     test_pinned_workspace_groups()
     test_sibling_worktrees_and_adopt()
     test_external_worktree_keys()
+    test_peek_other_clones()
     print("ok")
 
 
