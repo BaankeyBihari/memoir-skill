@@ -104,7 +104,7 @@ func runHTTPServer(ctx context.Context, ln net.Listener, srv *web.Server, hub *w
 	case <-ctx.Done():
 		log.Printf("%s shutting down", appName)
 		hub.Close()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 		return nil
