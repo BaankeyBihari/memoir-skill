@@ -1,5 +1,6 @@
 """Self-check for skills/memoir/scripts/memoir.py. Run: python3 test_memoir.py."""
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -470,7 +471,8 @@ def test_sibling_worktrees_and_adopt() -> None:
         run_git("-C", main_wt, "worktree", "add", "-q", gone_wt)
         base = {wt: Path(run_cli(wt, env, "path").stdout.strip()) for wt in (main_wt, feat_wt, gone_wt)}
         assert base[feat_wt].name == "wt__feat"
-        assert base[gone_wt].name == "gone"
+        gone_key = f"gone--{hashlib.sha256(str(gone_wt).encode()).hexdigest()[:8]}"
+        assert base[gone_wt].name == gone_key
         for wt in base:
             assert run_cli(wt, env, "init").returncode == 0
         assert f'"root": "{feat_wt}"' in (base[feat_wt] / "worktree.json").read_text(encoding=UTF8)
@@ -512,7 +514,7 @@ def test_sibling_worktrees_and_adopt() -> None:
             UTC,
         ).astimezone().strftime(FMT_DATE)
         assert summary.split(head)[1].strip().splitlines() == [
-            f"- gone: 0 decisions, 0 logs, 1 references, 0 feedback; newest {newest_gone}; worktree missing",
+            f"- {gone_key}: 0 decisions, 0 logs, 1 references, 0 feedback; newest {newest_gone}; worktree missing",
             f"- legacy: 0 decisions, 1 logs, 0 references, 0 feedback; newest {newest_legacy}; worktree unknown",
             f"- wt__feat: 2 decisions, 1 logs, 0 references, 1 feedback; newest {newest_feat}; worktree present",
         ], summary
@@ -554,6 +556,39 @@ def test_sibling_worktrees_and_adopt() -> None:
         assert not (active_dirs[main_wt] / DECISION_A2).exists()
 
 
+def test_external_worktree_keys() -> None:
+    """FR-1.3/FR-1.7: external worktrees get hashed keys; pre-hash folders are copied only into their owner."""
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw).resolve()
+        env = {**os.environ, "HOME": str(tmp), ENV_MEMOIR_STORE: "", "XDG_CONFIG_HOME": str(tmp / "xdg")}
+        main_wt, a_wt, b_wt, c_wt, named_main = (
+            tmp / "repo", tmp / "a" / "feat", tmp / "b" / "feat", tmp / "c" / "feat", tmp / "x" / "_main",
+        )
+        run_git("init", "-q", main_wt)
+        run_git("-C", main_wt, "commit", "-q", "--allow-empty", "-m", "init")
+        for wt in (a_wt, b_wt, c_wt, named_main):
+            run_git("-C", main_wt, "worktree", "add", "-q", "--detach", wt)
+        base = {wt: Path(run_cli(wt, env, "path").stdout.strip()) for wt in (main_wt, a_wt, b_wt, c_wt, named_main)}
+        assert len(set(base.values())) == len(base), base  # same-named and `_main`-named worktrees stay apart
+        assert base[main_wt].name == "_main"
+        assert base[a_wt].name == f"feat--{hashlib.sha256(str(a_wt).encode()).hexdigest()[:8]}"
+
+        # A pre-hash `paths/feat/` recorded for a_wt is copied into a_wt's new scope, never into b_wt's.
+        old = base[main_wt].parent / "feat"
+        (old / "active").mkdir(parents=True)
+        (old / "active" / DECISION_A).write_text(HDR_SUPERSEDES_NONE, encoding=UTF8)
+        (old / "worktree.json").write_text(f'{{"root": "{a_wt}", "last_seen": "x"}}\n', encoding=UTF8)
+        out = run_cli(a_wt, env, CMD_RESUME)
+        assert f"Migrated 1 files from {old} to {base[a_wt]}" in out.stderr, out
+        assert (base[a_wt] / "active" / DECISION_A).exists() and (old / "active" / DECISION_A).exists()
+        out = run_cli(b_wt, env, CMD_RESUME)
+        assert "Migrated" not in out.stderr and not (base[b_wt] / "active" / DECISION_A).exists(), out
+
+        # A pre-hash folder written before worktree.json existed is copied into the first claimant.
+        (old / "worktree.json").unlink()
+        assert f"Migrated 1 files from {old} to {base[c_wt]}" in run_cli(c_wt, env, CMD_RESUME).stderr
+
+
 def main() -> None:
     test_init_resume_and_archive()
     test_docs_and_skill_invariants()
@@ -564,6 +599,7 @@ def main() -> None:
     test_v1_store_migration()
     test_pinned_workspace_groups()
     test_sibling_worktrees_and_adopt()
+    test_external_worktree_keys()
     print("ok")
 
 
