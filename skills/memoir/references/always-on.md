@@ -7,9 +7,10 @@ Run `/memoir init` to install this block in the current project. For manual setu
 - Record decisions with the `memoir` skill. When I choose among alternatives or say "decision:" / "let's go with X", write a decision fragment (`/memoir decision`) without being asked. Don't keep decisions anywhere else.
 - Record milestones and blocking errors with `/memoir log`, and external paths or docs with `/memoir reference`.
 - When I state a standing preference for how we work (communication, review, structure), record it with `/memoir feedback`.
+- Use `/memoir capture` to open follow-up tasks and mark finished ones done. Use `/memoir prune` to review legacy notes and approve an archive list.
 - After finishing a task step, or before the context gets long, update `/memoir state`.
 - When I say "resume" or start a session on unfinished work, run `/memoir reload`. Report any wiki lag it prints so I can choose when to ingest.
-- When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, and feedback for this reload.
+- When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, feedback and tasks for this reload.
 - To review the delegated task’s goal, blockers, and next action, run `/memoir reload` in its worktree. After the branch merges, use `/memoir adopt <key>` from the receiving worktree to bring those fragments into future reloads. The state snapshot stays with its original worktree.
 - When this repository is also cloned elsewhere (for example a central repo used by other projects), run `/memoir reload --peek` to list the other clones' notes, then `/memoir reload <clone_id>/<key>` to include one for this reload. Never adopt from another clone: `/memoir adopt` is only for merged worktrees of this clone.
 ```

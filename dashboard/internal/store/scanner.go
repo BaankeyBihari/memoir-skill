@@ -455,6 +455,8 @@ func ClassifyFile(relPath string) (string, bool) {
 		return "log", archived
 	case strings.HasPrefix(base, "reference-"):
 		return "reference", archived
+	case strings.HasPrefix(base, "task-"):
+		return "task", archived
 	case strings.HasPrefix(base, "feedback-"):
 		return "feedback", archived
 	default:

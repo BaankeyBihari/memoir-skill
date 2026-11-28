@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -33,8 +33,8 @@ STATE_FILENAME = "state-current.md"
 AGENTS_MD = "AGENTS.md"
 CLAUDE_MD = "CLAUDE.md"
 
-ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
-SUPERSEDED_RE = re.compile(r"decision-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
+ARCHIVABLE_RE = re.compile(r"^(decision|log|reference|feedback|task)-[a-z0-9]+(-[a-z0-9]+)*\.md$")
+FRAGMENT_LINK_RE = re.compile(r"(?<![\w./-])(?:decision|reference|feedback|log|task)-[a-z0-9]+(?:-[a-z0-9]+)*\.md(?![\w./-])")
 
 def store_root() -> Path:
     return Path(os.environ.get("MEMOIR_STORE") or "~/.memoir").expanduser().resolve()
@@ -172,8 +172,8 @@ def resolve_store(store: Path, record: bool) -> Path:
 
 
 def fragments(scope: Path) -> list[Path]:
-    """Active decision, log, reference and feedback fragments: never state-current.md."""
-    return sorted(p for p in (scope / "active").glob("*.md") if ARCHIVABLE_RE.match(p.name))
+    """Archivable active fragments, including tasks."""
+    return sorted(p for p in (scope / "active").glob("*.md") if ARCHIVABLE_RE.fullmatch(p.name) and p.is_file() and not p.is_symlink())
 
 
 def _plain_name(part: str) -> bool:
@@ -216,10 +216,12 @@ def _checkout_lines(paths_dir: Path, skip: Path | None) -> list[str]:
         if not found:
             continue
         count = {kind: sum(p.name.startswith(f"{kind}-") for p in found) for kind in ("decision", "log", "reference", "feedback")}
+        tasks = sum(p.name.startswith("task-") for p in found)
+        task_summary = f", {tasks} tasks" if tasks else ""
         newest = datetime.fromtimestamp(max(p.stat().st_mtime for p in found), UTC).astimezone().strftime("%Y-%m-%d")
         status = _record_root(path / "worktree.json")[1]
         lines.append(f"- {path.name}: {count['decision']} decisions, {count['log']} logs, {count['reference']} references, "
-                     f"{count['feedback']} feedback; newest {newest}; worktree {status}")
+                     f"{count['feedback']} feedback{task_summary}; newest {newest}; worktree {status}")
     return lines
 
 
@@ -264,8 +266,8 @@ def adopt(base_dir: Path, source: Path) -> None:
     for path in moving:
         lines = path.read_text(encoding=UTF8).splitlines(keepends=True)
         for i, line in enumerate(lines):
-            if line.startswith((HDR_SUPERSEDES, "Superseded-By:")):
-                lines[i] = SUPERSEDED_RE.sub(lambda m: renamed.get(m.group(), m.group()), line)
+            if line.startswith((HDR_SUPERSEDES, "Superseded-By:", "Origin:")):
+                lines[i] = FRAGMENT_LINK_RE.sub(lambda m: renamed.get(m.group(), m.group()), line)
         dest = base_dir / "active" / names[path.name]
         # Write before unlinking: a crash leaves a duplicate, never a lost fragment.
         atomic_write(dest, "".join(lines))
@@ -367,7 +369,8 @@ def _superseded_names(path: Path) -> list[str]:
         name
         for line in path.read_text(encoding=UTF8).splitlines()
         if line.startswith(HDR_SUPERSEDES)
-        for name in SUPERSEDED_RE.findall(line)
+        for name in FRAGMENT_LINK_RE.findall(line)
+        if name.partition("-")[0] == path.name.partition("-")[0]
     }
     return sorted(names - {path.name})
 
@@ -385,13 +388,15 @@ def _resolve_superseded_holder(name: str, own_scope: Path, scopes: list[Path], s
 
 
 def find_superseded(scopes: list[Path]) -> dict[Path, str]:
-    """Active decisions named on another active decision's `Supersedes:` line, mapped to that decision's name.
+    """Active fragments named on another same-kind fragment's `Supersedes:` line, mapped to that decision's name.
 
     A name resolves in the superseding decision's own scope first, else in the only scope holding it (FR-2.3).
     """
     found: dict[Path, str] = {}
     for scope in scopes:
-        for path in sorted((scope / "active").glob("decision-*.md")):
+        for path in fragments(scope):
+            if not path.name.startswith(("decision-", "reference-", "feedback-")):
+                continue
             for name in _superseded_names(path):
                 holder = _resolve_superseded_holder(name, scope, scopes, path.name)
                 if holder is not None:
@@ -424,7 +429,45 @@ def add_superseded_by(path: Path, by: str) -> None:
     atomic_write(path, "\n".join(lines) + "\n")
 
 
-def archive_files(targets: list[tuple[str, Path]]):
+def retired_by_age_or_status(path: Path, today: date, max_age: int) -> bool:
+    if not path.name.startswith(("task-", "log-")):
+        return False
+    # Only leading fields carry lifecycle metadata. Examples in the body do not.
+    headers = path.read_text(encoding=UTF8).split("\n\n", 1)[0].splitlines()
+    key = "Status:" if path.name.startswith("task-") else "Date:"
+    values = [line.removeprefix(key).strip() for line in headers if line.startswith(key)]
+    if len(values) != 1:
+        return False
+    value = values[0]
+    if key == "Status:":
+        return value == "done"
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        return (today - date.fromisoformat(value)).days > max_age
+    except ValueError:
+        return False
+
+
+def archive_selected(args: argparse.Namespace, store: Path, base_dir: Path):
+    targets = {base_dir / "active" / f: f for f in args.files}
+    links = {}
+    if args.retired or args.superseded:
+        scopes = members_of(store, base_dir)
+        links = find_superseded(scopes)
+        targets.update((p, p.name) for p in links)
+        if args.retired:
+            raw = os.environ.get("MEMOIR_LOG_MAX_AGE_DAYS", "30")
+            if not re.fullmatch(r"[0-9]+", raw):
+                raise ValueError("MEMOIR_LOG_MAX_AGE_DAYS must be a nonnegative integer")
+            today = datetime.now().astimezone().date()
+            age = int(raw)
+            for scope in scopes:
+                targets.update((p, p.name) for p in fragments(scope) if retired_by_age_or_status(p, today, age))
+    archive_files([(name, path) for path, name in targets.items()], links)
+
+
+def archive_files(targets: list[tuple[str, Path]], links: dict[Path, str]):
     """Move each (name, active path) into the archive/ beside it."""
     if not targets:
         print("[Memoir] Archived 0 files.")
@@ -437,16 +480,18 @@ def archive_files(targets: list[tuple[str, Path]]):
     for filename, source_path in targets:
         dest_name = f"{today}-{filename}"
         dest_path = source_path.parent.parent / "archive" / dest_name
-        if not ARCHIVABLE_RE.match(filename):
+        if not ARCHIVABLE_RE.fullmatch(filename):
             print(f"Not an archivable fragment name: {filename}")
             failed = True
-        elif not source_path.exists():
+        elif not source_path.is_file() or source_path.is_symlink():
             print(f"File not found in active: {filename}")
             failed = True
-        elif dest_path.exists():
+        elif dest_path.exists() or dest_path.is_symlink():
             print(f"Already archived, not overwriting: {dest_name}")
             failed = True
         else:
+            if source_path in links:
+                add_superseded_by(source_path, links[source_path])
             shutil.move(source_path, dest_path)
             print(f"Archived: {filename} -> {dest_name}")
             archived_count += 1
@@ -456,13 +501,26 @@ def archive_files(targets: list[tuple[str, Path]]):
         sys.exit(1)
 
 
-def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path], peek: bool = False):
+def active_file_sizes(base_dir: Path, scopes: list[Path], extra: list[Path]) -> dict[Path, int]:
     state_file = base_dir / "active" / STATE_FILENAME
-    files = [state_file] if state_file.exists() else []
+    files = [state_file]
     # Other group members' and siblings' state belongs to their own folders (FR-2.4).
     files += sorted(p for s in scopes for p in (s / "active").glob("*.md") if p.name != STATE_FILENAME)
     files += [p for s in dict.fromkeys(extra) for p in fragments(s)]
 
+    sizes = {}
+    for path in files:
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            continue  # Another reload may have retired it during the scan.
+        if stat.S_ISREG(info.st_mode):
+            sizes[path] = info.st_size
+    return sizes
+
+
+def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path], peek: bool = False):
+    files = active_file_sizes(base_dir, scopes, extra)
     generate_prompt(base_dir)
     if not files:
         print("\nNo recorded session found. Start fresh.")
@@ -471,6 +529,10 @@ def generate_resume(base_dir: Path, scopes: list[Path], extra: list[Path], peek:
         for idx, filepath in enumerate(files, 1):
             print(f"{idx}. {filepath.absolute()}")
         print("\nBased on the state file, resume the current task.")
+    size = sum(files.values())
+    hint = "; run /memoir prune" if len(files) > 50 or size > 60 * 1024 else ""
+    noun = "file" if len(files) == 1 else "files"
+    print(f"Active: {len(files)} {noun}, {size} bytes{hint}")
     print_wiki_lag(store_root(), base_dir)
     print_siblings(store_root(), base_dir)
     if peek:
@@ -708,7 +770,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     archive_parser = subparsers.add_parser("archive", help="Move specified files to the archive")
     archive_parser.add_argument("files", nargs="*", help="List of filenames in active/ to archive")
-    archive_parser.add_argument("--superseded", action="store_true", help="Archive every decision named in an active decision's Supersedes: line")
+    archive_parser.add_argument("--superseded", action="store_true", help="Archive superseded decisions, references and feedback")
+
+    archive_parser.add_argument("--retired", action="store_true", help="Also archive completed tasks and expired logs")
 
     subparsers.add_parser("path", help="Print the resolved base directory")
     subparsers.add_parser("scope", help="Print the wiki scope root and the fragment directories it covers")
@@ -748,14 +812,17 @@ def _run_store_command(
     elif args.command == "init":
         init_store(base_dir)
     elif args.command == "archive":
-        if not args.files and not args.superseded:
-            parser.error("archive needs filenames or --superseded")
-        superseded = find_superseded(members_of(store, base_dir)) if args.superseded else {}
-        # Back-link the active copy before the move: a crash leaves a duplicate, never a lost fragment.
-        for path, by in superseded.items():
-            add_superseded_by(path, by)
-        targets = [(f, base_dir / "active" / f) for f in args.files] + [(p.name, p) for p in superseded]
-        archive_files(targets)
+        if not (args.files or args.superseded or args.retired):
+            parser.error("archive needs filenames, --superseded or --retired")
+        import fcntl
+
+        # Overlapping pin members and simultaneous reloads share archive destinations.
+        directory = os.open(store, os.O_RDONLY)
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX)
+            archive_selected(args, store, base_dir)
+        finally:
+            os.close(directory)
     elif args.command == "prompt":
         generate_prompt(base_dir)
     elif args.command == "resume":

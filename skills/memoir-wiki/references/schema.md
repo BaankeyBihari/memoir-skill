@@ -11,7 +11,7 @@ One wiki per scope, never merged:
 - Git repository: `<STORE_ROOT>/repos/<repo_id>/wiki/`, compiled from
   `clones/*/paths/*/active/` and `clones/*/paths/*/archive/`.
 - Pinned workspace: `<STORE_ROOT>/pinned/<slug>/wiki/`, compiled from
-  `paths/*/active/` and `paths/*/archive/`.
+  the standalone fragment directories returned by `memoir.py scope`.
 - Standalone directory: no wiki.
 
 ```text
@@ -62,6 +62,8 @@ Pages follow the memoir fragment convention: a `# Title`, then plain
 
 Decision pages add `Status: active | superseded`. A superseded page whose
 replacement lives on a different page adds `Superseded-By: [[decisions/<page>]]`.
+
+For an archive move, change the source path on every page citing it. Retain the previous content as history when a decision, reference or feedback entry has a replacement. Mark only the affected entry on shared pages. Tasks and state have no wiki page or watermark entry.
 
 ## Page templates
 

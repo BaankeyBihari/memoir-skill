@@ -18,5 +18,9 @@
   {"query": "set up redis-backed session storage for the express app, sessions should survive restarts", "should_trigger": false},
   {"query": "remember that I prefer tabs over spaces in all my projects from now on", "should_trigger": false},
   {"query": "write a changelog entry for v2.3.0 from the git log since the last tag", "should_trigger": false},
-  {"query": "our app's state management is a mess, should we move from redux to zustand? list pros and cons", "should_trigger": false}
+  {"query": "our app's state management is a mess, should we move from redux to zustand? list pros and cons", "should_trigger": false},
+  {"query": "/memoir prune", "should_trigger": true},
+  {"query": "My saved session notes are full of old milestones. Can you find unfinished follow-ups and show me which notes I can archive?", "should_trigger": true},
+  {"query": "Prune unused imports from the checkout and show me the diff", "should_trigger": false},
+  {"query": "Which git command prunes stale remote-tracking branches?", "should_trigger": false}
 ]

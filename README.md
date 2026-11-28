@@ -6,7 +6,7 @@ Full specifications: [system_requirements_document_memoir_skill.md](system_requi
 
 ## Components
 
-- **`skills/memoir`**: High-frequency session compaction into typed Markdown fragments (`decision`, `log`, `reference`, `feedback`, `state-current.md`) for instant `CLEAR` / `reload` cycles.
+- **`skills/memoir`**: High-frequency session compaction into typed Markdown fragments (`decision`, `log`, `reference`, `feedback`, `task`, `state-current.md`) for instant `CLEAR` / `reload` cycles.
 - **`skills/memoir-wiki`**: Cumulative knowledge compiler (`ingest`, `query`, `lint`) that synthesizes fragments across clones and worktrees into interlinked `wiki/` pages with `[[wikilinks]]`.
 - **`dashboard/` (`memoir-ui`)**: Single-binary Go HTTP viewer with `embed.FS` assets, 7 color themes, `fsnotify` SSE live reload, `[[wikilink]]` & backlink navigation, decision supersession graphs, `Cmd+K` search, and safe orphan pruning.
 
@@ -66,10 +66,11 @@ Or inside an interactive `agy` session: `/plugin install https://github.com/Baan
 | `/memoir reference [text]` | Writes `reference-{slug}.md` |
 | `/memoir feedback [text]` | Writes `feedback-{slug}.md`, a durable collaboration or working-style preference |
 | `/memoir state` | Overwrites `state-current.md` (Goal, Completed, Blocked/Pending, Next Action) |
-| `/memoir capture` | Writes every unrecorded decision, log, reference and feedback from the conversation, then updates `state-current.md` |
+| `/memoir capture` | Writes every unrecorded decision, log, reference and feedback from the conversation, opens or completes follow-up tasks, then updates `state-current.md` |
+| `/memoir prune` | Proposes tasks and archive candidates from legacy notes, then applies the approved subset |
 | `/memoir coach` | Captures, then recommends CONTINUE, COMPACT or CLEAR with evidence and paste-ready next steps |
-| `/memoir reload [--peek] [key ...]` | Archives superseded decisions and loads the last recorded session; lists sibling worktrees with fragments, and loads each given sibling key's fragments too. `--peek` also lists other clones of the repo, loadable as `<clone_id>/<key>` |
-| `/memoir adopt <key>` | Moves a merged sibling worktree's decisions, logs, references and feedback into this scope (state stays) |
+| `/memoir reload [--peek] [key ...]` | Archives completed tasks, expired logs and superseded decisions, references and feedback, then loads the last recorded session; lists sibling worktrees with fragments, and loads each given sibling key's fragments too. `--peek` also lists other clones of the repo, loadable as `<clone_id>/<key>` |
+| `/memoir adopt <key>` | Moves a merged sibling worktree's decisions, logs, references, feedback and tasks into this scope (state stays) |
 | `/memoir pin [path]` | Groups a non-Git workspace and its subfolders (default current directory): each folder keeps its own notes, `reload` loads the whole group's, state stays per folder |
 | `/memoir unpin [path]` | Removes the group; every folder keeps its own notes |
 
@@ -125,9 +126,10 @@ For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all proje
 - Record decisions with the `memoir` skill. When I choose among alternatives or say "decision:" / "let's go with X", write a decision fragment (`/memoir decision`) without being asked. Don't keep decisions anywhere else.
 - Record milestones and blocking errors with `/memoir log`, and external paths or docs with `/memoir reference`.
 - When I state a standing preference for how we work (communication, review, structure), record it with `/memoir feedback`.
+- Use `/memoir capture` to open follow-up tasks and mark finished ones done. Use `/memoir prune` to review legacy notes and approve an archive list.
 - After finishing a task step, or before the context gets long, update `/memoir state`.
 - When I say "resume" or start a session on unfinished work, run `/memoir reload`. Report any wiki lag it prints so I can choose when to ingest.
-- When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, and feedback for this reload.
+- When reviewing work delegated to another branch in a sibling worktree, use the key listed by `/memoir reload`. Run `/memoir reload <key>` to include that worktree’s decisions, logs, references, feedback and tasks for this reload.
 - To review the delegated task’s goal, blockers, and next action, run `/memoir reload` in its worktree. After the branch merges, use `/memoir adopt <key>` from the receiving worktree to bring those fragments into future reloads. The state snapshot stays with its original worktree.
 - When this repository is also cloned elsewhere (for example a central repo used by other projects), run `/memoir reload --peek` to list the other clones' notes, then `/memoir reload <clone_id>/<key>` to include one for this reload. Never adopt from another clone: `/memoir adopt` is only for merged worktrees of this clone.
 ```
@@ -146,7 +148,8 @@ For manual capture setup, paste this block into `~/.claude/CLAUDE.md` (all proje
 | `path` | Prints the resolved store directory |
 | `scope` | Prints the wiki scope root (repository or pinned group), then each fragment directory it covers |
 | `archive <files>` | Moves fragments to `archive/` as `YYYYMMDD-<name>` and never overwrites |
-| `archive --superseded` | Archives every decision named on another decision's `Supersedes:` line, writing a `Superseded-By:` back-link into each archived copy |
+| `archive --superseded` | Archives superseded same-kind decisions, references and feedback, writing a `Superseded-By:` back-link into each archived copy |
+| `archive --retired` | Also archives completed tasks and logs older than `MEMOIR_LOG_MAX_AGE_DAYS` (default 30) |
 | `wiki-diff` | Lists new, changed and missing wiki sources across the current repository or pinned group |
 | `resume [--peek] [--with <key>]...` | Prints the path and the files to load, `state-current.md` first, then sibling worktrees that have fragments; `--with` adds a sibling's fragments, or another clone's with `<clone_id>/<key>`; `--peek` lists other clones of the repo |
 | `adopt <key>` | Moves a sibling worktree's fragments into this scope, suffixing name collisions |

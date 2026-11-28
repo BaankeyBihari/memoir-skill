@@ -62,6 +62,19 @@ func TestRenderHeadersAndBadges(t *testing.T) {
 	}
 }
 
+func TestTaskOriginSelectsDatedArchive(t *testing.T) {
+	root := t.TempDir()
+	scope := "standalone/scratch--33333333/"
+	active := scope + "active/log-pilot.md"
+	archived := scope + "archive/20261110-log-pilot.md"
+	writeTestFile(t, filepath.Join(root, active), "# Second pilot")
+	writeTestFile(t, filepath.Join(root, archived), "# First pilot")
+	doc, err := RenderDocument(root, scope+"active/task-check.md", "# Check\nOrigin: 20261110-log-pilot.md\nTask: Verify counts.\n")
+	if err != nil || len(doc.Badges) != 1 || doc.Badges[0].TargetPath != archived {
+		t.Fatalf("dated task origin: %+v, %v", doc, err)
+	}
+}
+
 func TestRenderMarkdownWikilinksAndSafety(t *testing.T) {
 	storeRoot := t.TempDir()
 

@@ -178,7 +178,7 @@
   <div id="searchModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Search Memoir Store">
     <div class="modal search-modal">
       <div class="search-input-row">
-        <input id="searchInput" type="text" placeholder="Search decisions, wikis, logs, references, feedback..." autocomplete="off" oninput="onSearchInput()" onkeydown="onSearchKeyDown(event)">
+        <input id="searchInput" type="text" placeholder="Search decisions, wikis, tasks, logs, references, feedback..." autocomplete="off" oninput="onSearchInput()" onkeydown="onSearchKeyDown(event)">
         <button type="button" class="mini-btn" onclick="closeSearchModal()">Esc</button>
       </div>
       <div class="filter-bar">
@@ -195,6 +195,7 @@
           <button type="button" class="filter-pill" data-type="decision" onclick="setSearchType('decision')">Decision</button>
           <button type="button" class="filter-pill" data-type="log" onclick="setSearchType('log')">Log</button>
           <button type="button" class="filter-pill" data-type="reference" onclick="setSearchType('reference')">Reference</button>
+          <button type="button" class="filter-pill" data-type="task" onclick="setSearchType('task')">Tasks</button>
           <button type="button" class="filter-pill" data-type="feedback" onclick="setSearchType('feedback')">Feedback</button>
           <button type="button" class="filter-pill" data-type="wiki" onclick="setSearchType('wiki')">Wiki</button>
         </div>
