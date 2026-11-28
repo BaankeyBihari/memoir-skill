@@ -448,6 +448,7 @@ body.is-resizing-sidebar {
 
 .tree-file-btn {
   display: flex;
+  text-decoration: none;
   align-items: center;
   gap: 6px;
   width: 100%;
