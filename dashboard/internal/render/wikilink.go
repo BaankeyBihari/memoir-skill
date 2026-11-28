@@ -46,8 +46,8 @@ func (n *WikilinkNode) Kind() ast.NodeKind {
 // Dump implements ast.Node.
 func (n *WikilinkNode) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, map[string]string{
-		"Target": n.Link.RawTarget,
-		"Label":  n.Link.Label,
+		hdrTarget: n.Link.RawTarget,
+		"Label":   n.Link.Label,
 	}, nil)
 }
 
@@ -60,7 +60,7 @@ func (p *wikilinkParser) Trigger() []byte {
 	return []byte{'['}
 }
 
-func (p *wikilinkParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+func (p *wikilinkParser) Parse(_ ast.Node, block text.Reader, _ parser.Context) ast.Node {
 	line, _ := block.PeekLine()
 	if len(line) < 5 || line[0] != '[' || line[1] != '[' || line[2] == '[' {
 		return nil
@@ -68,10 +68,7 @@ func (p *wikilinkParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 
 	end := -1
 	for i := 2; i+1 < len(line); i++ {
-		if line[i] == '\n' || line[i] == '\r' {
-			return nil
-		}
-		if line[i] == '[' {
+		if line[i] == '\n' || line[i] == '\r' || line[i] == '[' {
 			return nil
 		}
 		if line[i] == ']' && line[i+1] == ']' {
@@ -99,7 +96,7 @@ func (r *wikilinkRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer
 	reg.Register(KindWikilink, r.renderWikilink)
 }
 
-func (r *wikilinkRenderer) renderWikilink(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+func (r *wikilinkRenderer) renderWikilink(w util.BufWriter, _ []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
 		return ast.WalkContinue, nil
 	}
@@ -247,6 +244,25 @@ type resolvedTarget struct {
 	Broken    bool
 }
 
+func resolveCrossWikiTarget(storeRoot, scope, pagePath string) resolvedTarget {
+	if scope == "" || !isCleanSegment(scope) {
+		return resolvedTarget{Scope: scope, Page: pagePath, CrossWiki: true, Broken: true}
+	}
+	for _, kind := range []string{scopeRepos, scopePinned} {
+		candidate := path.Join(kind, scope, dirWiki, pagePath+extMD)
+		if _, err := store.ResolveSafeFile(storeRoot, candidate); err == nil {
+			return resolvedTarget{
+				Scope:     scope,
+				Page:      pagePath,
+				Resolved:  candidate,
+				CrossWiki: true,
+				Broken:    false,
+			}
+		}
+	}
+	return resolvedTarget{Scope: scope, Page: pagePath, CrossWiki: true, Broken: true}
+}
+
 func resolveWikilinkTarget(storeRoot, currentRelPath, target string) resolvedTarget {
 	target = strings.TrimSpace(target)
 	if target == "" || strings.Contains(target, "\\") || strings.HasPrefix(target, "/") {
@@ -262,35 +278,20 @@ func resolveWikilinkTarget(storeRoot, currentRelPath, target string) resolvedTar
 		pagePath = strings.TrimSpace(target[colon+1:])
 	}
 
-	pagePath = strings.TrimSuffix(pagePath, ".md")
+	pagePath = strings.TrimSuffix(pagePath, extMD)
 	if pagePath == "" || !isCleanWikiPageRel(pagePath) {
 		return resolvedTarget{Scope: scope, Page: pagePath, CrossWiki: cross, Broken: true}
 	}
 
 	if cross {
-		if scope == "" || !isCleanSegment(scope) {
-			return resolvedTarget{Scope: scope, Page: pagePath, CrossWiki: true, Broken: true}
-		}
-		for _, kind := range []string{"repos", "pinned"} {
-			candidate := path.Join(kind, scope, "wiki", pagePath+".md")
-			if _, err := store.ResolveSafeFile(storeRoot, candidate); err == nil {
-				return resolvedTarget{
-					Scope:     scope,
-					Page:      pagePath,
-					Resolved:  candidate,
-					CrossWiki: true,
-					Broken:    false,
-				}
-			}
-		}
-		return resolvedTarget{Scope: scope, Page: pagePath, CrossWiki: true, Broken: true}
+		return resolveCrossWikiTarget(storeRoot, scope, pagePath)
 	}
 
 	_, _, wikiRel, ok := WikiRootForPath(currentRelPath)
 	if !ok {
 		return resolvedTarget{Page: pagePath, Broken: true}
 	}
-	candidate := path.Join(wikiRel, pagePath+".md")
+	candidate := path.Join(wikiRel, pagePath+extMD)
 	if _, err := store.ResolveSafeFile(storeRoot, candidate); err == nil {
 		return resolvedTarget{
 			Page:     pagePath,
@@ -304,8 +305,8 @@ func resolveWikilinkTarget(storeRoot, currentRelPath, target string) resolvedTar
 // WikiRootForPath extracts (scopeKind, scopeID, wikiRelPath, ok) for a store-relative wiki page path.
 func WikiRootForPath(relPath string) (string, string, string, bool) {
 	parts := strings.Split(path.Clean(relPath), "/")
-	if len(parts) >= 4 && (parts[0] == "repos" || parts[0] == "pinned") && parts[2] == "wiki" {
-		return parts[0], parts[1], path.Join(parts[0], parts[1], "wiki"), true
+	if len(parts) >= 4 && (parts[0] == scopeRepos || parts[0] == scopePinned) && parts[2] == dirWiki {
+		return parts[0], parts[1], path.Join(parts[0], parts[1], dirWiki), true
 	}
 	return "", "", "", false
 }

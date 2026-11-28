@@ -4,6 +4,16 @@
   const SIDEBAR_DEFAULT_WIDTH = 320;
   const SIDEBAR_MIN_WIDTH = 220;
   const SIDEBAR_MAX_WIDTH = 640;
+
+  const HASH_FILE_PREFIX = '#file=';
+  const CLS_BADGE_ACCENT = 'badge accent';
+  const CLS_BADGE_WARN = 'badge warn';
+  const CLS_BADGE_DANGER = 'badge danger';
+  const CLS_TREE_EMPTY = 'tree-empty';
+  const CLS_EMPTY_NOTE = 'empty-note';
+  const COLOR_MUTED = 'var(--muted)';
+  const PREFIX_PINNED = 'pinned:';
+
   const expandedNodes = new Set();
   const knownDefaultExpanded = new Set();
   const changeListeners = new Set();
@@ -19,6 +29,22 @@
   let searchTimer = null;
   let pendingPruneTarget = null;
   let savedSidebarWidth = SIDEBAR_DEFAULT_WIDTH;
+
+  function safeStorageGet(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function safeStorageSet(key, val) {
+    try {
+      localStorage.setItem(key, val);
+    } catch {
+      // Ignore storage write errors in private or sandboxed browser modes.
+    }
+  }
 
   function applyTheme(theme) {
     const allowed = new Set([
@@ -38,21 +64,15 @@
     }
     const sel = document.getElementById('themeSelect');
     if (sel) sel.value = t;
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, t);
-    } catch (_) {}
+    safeStorageSet(THEME_STORAGE_KEY, t);
   }
 
   function initTheme() {
-    let saved = 'midnight';
-    try {
-      saved = localStorage.getItem(THEME_STORAGE_KEY) || 'midnight';
-    } catch (_) {}
-    applyTheme(saved);
+    applyTheme(safeStorageGet(THEME_STORAGE_KEY) || 'midnight');
   }
 
   function clampSidebarWidth(width) {
-    const viewportCap = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - 280);
+    const viewportCap = Math.max(SIDEBAR_MIN_WIDTH, globalThis.innerWidth - 280);
     const maxW = Math.min(SIDEBAR_MAX_WIDTH, viewportCap);
     return Math.round(Math.min(maxW, Math.max(SIDEBAR_MIN_WIDTH, width)));
   }
@@ -66,23 +86,47 @@
     }
     if (persist) {
       savedSidebarWidth = clamped;
-      try {
-        localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped));
-      } catch (_) {}
+      safeStorageSet(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped));
     }
     return clamped;
   }
 
-  function initSidebarResize() {
-    let initial = SIDEBAR_DEFAULT_WIDTH;
+  function readSavedSidebarWidth() {
+    const stored = Number.parseInt(safeStorageGet(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10);
+    if (!Number.isNaN(stored) && stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH) {
+      return stored;
+    }
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+
+  function releasePointerSafely(resizer, ev) {
+    if (!ev || typeof ev.pointerId !== 'number' || !resizer.hasPointerCapture || !resizer.hasPointerCapture(ev.pointerId)) {
+      return;
+    }
     try {
-      const stored = parseInt(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10);
-      if (!isNaN(stored) && stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH) {
-        initial = stored;
-      }
-    } catch (_) {}
-    savedSidebarWidth = initial;
-    applySidebarWidth(initial, false);
+      resizer.releasePointerCapture(ev.pointerId);
+    } catch {
+      // Ignore if pointer capture already ended before release.
+    }
+  }
+
+  function onResizerKeyDown(ev, sidebar) {
+    const step = ev.shiftKey ? 40 : 20;
+    if (ev.key === 'ArrowRight') {
+      ev.preventDefault();
+      applySidebarWidth(sidebar.getBoundingClientRect().width + step, true);
+    } else if (ev.key === 'ArrowLeft') {
+      ev.preventDefault();
+      applySidebarWidth(sidebar.getBoundingClientRect().width - step, true);
+    } else if (ev.key === 'Home') {
+      ev.preventDefault();
+      applySidebarWidth(SIDEBAR_DEFAULT_WIDTH, true);
+    }
+  }
+
+  function initSidebarResize() {
+    savedSidebarWidth = readSavedSidebarWidth();
+    applySidebarWidth(savedSidebarWidth, false);
 
     const resizer = document.getElementById('sidebarResizer');
     const sidebar = document.getElementById('sidebar');
@@ -98,9 +142,7 @@
       dragging = false;
       resizer.classList.remove('resizing');
       document.body.classList.remove('is-resizing-sidebar');
-      if (ev && typeof ev.pointerId === 'number' && resizer.hasPointerCapture && resizer.hasPointerCapture(ev.pointerId)) {
-        try { resizer.releasePointerCapture(ev.pointerId); } catch (_) {}
-      }
+      releasePointerSafely(resizer, ev);
       applySidebarWidth(lastWidth, true);
     }
 
@@ -114,39 +156,23 @@
       resizer.classList.add('resizing');
       document.body.classList.add('is-resizing-sidebar');
       if (typeof ev.pointerId === 'number' && resizer.setPointerCapture) {
-        try { resizer.setPointerCapture(ev.pointerId); } catch (_) {}
+        try {
+          resizer.setPointerCapture(ev.pointerId);
+        } catch {
+          // Ignore synthetic or non-primary pointer capture failures.
+        }
       }
     });
 
-    window.addEventListener('pointermove', function (ev) {
+    globalThis.addEventListener('pointermove', function (ev) {
       if (!dragging) return;
       lastWidth = applySidebarWidth(startWidth + (ev.clientX - startX), false);
     });
-
-    window.addEventListener('pointerup', finishDrag);
-    window.addEventListener('pointercancel', finishDrag);
-
-    resizer.addEventListener('dblclick', function () {
-      applySidebarWidth(SIDEBAR_DEFAULT_WIDTH, true);
-    });
-
-    resizer.addEventListener('keydown', function (ev) {
-      const step = ev.shiftKey ? 40 : 20;
-      if (ev.key === 'ArrowRight') {
-        ev.preventDefault();
-        applySidebarWidth(sidebar.getBoundingClientRect().width + step, true);
-      } else if (ev.key === 'ArrowLeft') {
-        ev.preventDefault();
-        applySidebarWidth(sidebar.getBoundingClientRect().width - step, true);
-      } else if (ev.key === 'Home') {
-        ev.preventDefault();
-        applySidebarWidth(SIDEBAR_DEFAULT_WIDTH, true);
-      }
-    });
-
-    window.addEventListener('resize', function () {
-      applySidebarWidth(savedSidebarWidth, false);
-    });
+    globalThis.addEventListener('pointerup', finishDrag);
+    globalThis.addEventListener('pointercancel', finishDrag);
+    resizer.addEventListener('dblclick', function () { applySidebarWidth(SIDEBAR_DEFAULT_WIDTH, true); });
+    resizer.addEventListener('keydown', function (ev) { onResizerKeyDown(ev, sidebar); });
+    globalThis.addEventListener('resize', function () { applySidebarWidth(savedSidebarWidth, false); });
   }
 
   function showToast(msg, kind) {
@@ -200,7 +226,7 @@
 
     const tdOp = document.createElement('td');
     const badge = document.createElement('span');
-    badge.className = 'badge accent';
+    badge.className = CLS_BADGE_ACCENT;
     badge.textContent = ev.op || ev.type || 'change';
     tdOp.appendChild(badge);
 
@@ -253,32 +279,32 @@
     renderTree();
   }
 
-  function createCollapsibleGroup(id, label, defaultOpen, strong, tooltip, badgeText, buildChildren) {
-    const open = isExpanded(id, defaultOpen);
+  function createCollapsibleGroup(opts) {
+    const open = isExpanded(opts.id, opts.defaultOpen);
     const wrap = document.createElement('div');
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tree-node-btn';
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (tooltip) btn.title = tooltip;
-    btn.onclick = function () { toggleNode(id); };
+    if (opts.tooltip) btn.title = opts.tooltip;
+    btn.onclick = function () { toggleNode(opts.id); };
 
     const chev = document.createElement('span');
     chev.className = 'tree-chevron';
     chev.textContent = open ? '▾' : '▸';
 
     const lbl = document.createElement('span');
-    lbl.className = 'tree-label' + (strong ? ' strong' : '');
-    lbl.textContent = label;
+    lbl.className = 'tree-label' + (opts.strong ? ' strong' : '');
+    lbl.textContent = opts.label;
 
     btn.appendChild(chev);
     btn.appendChild(lbl);
 
-    if (badgeText) {
+    if (opts.badgeText) {
       const b = document.createElement('span');
       b.className = 'tree-count';
-      b.textContent = badgeText;
+      b.textContent = opts.badgeText;
       btn.appendChild(b);
     }
 
@@ -287,7 +313,7 @@
     if (open) {
       const children = document.createElement('div');
       children.className = 'tree-children';
-      buildChildren(children);
+      opts.buildChildren(children);
       wrap.appendChild(children);
     }
     return wrap;
@@ -355,34 +381,32 @@
       (wiki.categories || []).reduce(function (acc, c) { return acc + (c.pages || []).length; }, 0);
     if (total === 0) return;
 
-    container.appendChild(createCollapsibleGroup(
-      'wiki:' + scopeKey,
-      'Wiki',
-      true,
-      true,
-      'Shared compiled wiki',
-      String(total),
-      function (wikiEl) {
+    container.appendChild(createCollapsibleGroup({
+      id: 'wiki:' + scopeKey,
+      label: 'Wiki',
+      defaultOpen: true,
+      strong: true,
+      tooltip: 'Shared compiled wiki',
+      badgeText: String(total),
+      buildChildren: function (wikiEl) {
         (wiki.top_pages || []).forEach(function (page) {
           wikiEl.appendChild(createFileItem(page));
         });
         (wiki.categories || []).forEach(function (cat) {
-          wikiEl.appendChild(createCollapsibleGroup(
-            'cat:' + scopeKey + ':' + cat.name,
-            cat.name + '/',
-            true,
-            false,
-            '',
-            String((cat.pages || []).length),
-            function (catEl) {
-              (cat.pages || []).forEach(function (page) {
-                catEl.appendChild(createFileItem(page));
-              });
+          wikiEl.appendChild(createCollapsibleGroup({
+            id: 'cat:' + scopeKey + ':' + cat.name,
+            label: cat.name + '/',
+            defaultOpen: true,
+            strong: false,
+            tooltip: '',
+            badgeText: String((cat.pages || []).length),
+            buildChildren: function (catEl) {
+              (cat.pages || []).forEach(function (page) { catEl.appendChild(createFileItem(page)); });
             }
-          ));
+          }));
         });
       }
-    ));
+    }));
   }
 
   function appendActiveArchiveBranch(container, nodePrefix, stateNode, activeList, archiveList) {
@@ -390,47 +414,48 @@
       container.appendChild(createFileItem(stateNode));
     }
     if ((activeList || []).length > 0) {
-      container.appendChild(createCollapsibleGroup(
-        nodePrefix + ':active',
-        'active/',
-        true,
-        false,
-        '',
-        String(activeList.length),
-        function (actEl) {
+      container.appendChild(createCollapsibleGroup({
+        id: nodePrefix + ':active',
+        label: 'active/',
+        defaultOpen: true,
+        strong: false,
+        tooltip: '',
+        badgeText: String(activeList.length),
+        buildChildren: function (actEl) {
           activeList.forEach(function (f) { actEl.appendChild(createFileItem(f)); });
         }
-      ));
+      }));
     }
     if ((archiveList || []).length > 0) {
-      container.appendChild(createCollapsibleGroup(
-        nodePrefix + ':archive',
-        'archive/',
-        false,
-        false,
-        '',
-        String(archiveList.length),
-        function (archEl) {
+      container.appendChild(createCollapsibleGroup({
+        id: nodePrefix + ':archive',
+        label: 'archive/',
+        defaultOpen: false,
+        strong: false,
+        tooltip: '',
+        badgeText: String(archiveList.length),
+        buildChildren: function (archEl) {
           archiveList.forEach(function (f) { archEl.appendChild(createFileItem(f)); });
         }
-      ));
+      }));
     }
   }
 
   function appendPathsBranch(container, scopeKey, paths) {
     (paths || []).forEach(function (p) {
       const count = (p.state ? 1 : 0) + (p.active || []).length + (p.archive || []).length;
-      container.appendChild(createCollapsibleGroup(
-        'path:' + scopeKey + ':' + p.key,
-        p.label,
-        true,
-        false,
-        p.key,
-        String(count),
-        function (pathEl) {
-          appendActiveArchiveBranch(pathEl, 'path:' + scopeKey + ':' + p.key, p.state, p.active, p.archive);
+      const nodeId = 'path:' + scopeKey + ':' + p.key;
+      container.appendChild(createCollapsibleGroup({
+        id: nodeId,
+        label: p.label,
+        defaultOpen: true,
+        strong: false,
+        tooltip: p.key,
+        badgeText: String(count),
+        buildChildren: function (pathEl) {
+          appendActiveArchiveBranch(pathEl, nodeId, p.state, p.active, p.archive);
         }
-      ));
+      }));
     });
   }
 
@@ -450,127 +475,131 @@
     return sec;
   }
 
+  function appendEmptyTreeNote(sec, msg) {
+    const empty = document.createElement('div');
+    empty.className = CLS_TREE_EMPTY;
+    empty.textContent = msg;
+    sec.appendChild(empty);
+  }
+
+  function renderReposSection(repos) {
+    const sec = createSection('Repos', repos.length);
+    if (repos.length === 0) {
+      appendEmptyTreeNote(sec, 'No repositories yet');
+      return sec;
+    }
+    repos.forEach(function (repo) {
+      sec.appendChild(createCollapsibleGroup({
+        id: 'repo:' + repo.id,
+        label: repo.label,
+        defaultOpen: true,
+        strong: true,
+        tooltip: repo.meta && repo.meta.remote ? repo.meta.remote : repo.id,
+        badgeText: '',
+        buildChildren: function (repoEl) {
+          appendWikiBranch(repoEl, 'repo:' + repo.id, repo.wiki);
+          (repo.clones || []).forEach(function (clone) {
+            const cloneKey = repo.id + ':' + clone.id;
+            const group = createCollapsibleGroup({
+              id: 'clone:' + cloneKey,
+              label: clone.label,
+              defaultOpen: true,
+              strong: false,
+              tooltip: clone.root || clone.rel_path,
+              badgeText: String((clone.paths || []).length),
+              buildChildren: function (cloneEl) {
+                appendPathsBranch(cloneEl, 'clone:' + cloneKey, clone.paths);
+              }
+            });
+            if (clone.orphaned) {
+              decorateOrphanGroup(group, {
+                scope: 'clone',
+                id: clone.id,
+                rel_path: clone.rel_path,
+                root: clone.root || ''
+              });
+            }
+            repoEl.appendChild(group);
+          });
+        }
+      }));
+    });
+    return sec;
+  }
+
+  function renderPinnedSection(pinned) {
+    const sec = createSection('Pinned Workspaces', pinned.length);
+    if (pinned.length === 0) {
+      appendEmptyTreeNote(sec, 'No pinned workspaces');
+      return sec;
+    }
+    pinned.forEach(function (pin) {
+      const group = createCollapsibleGroup({
+        id: PREFIX_PINNED + pin.id,
+        label: pin.label,
+        defaultOpen: true,
+        strong: true,
+        tooltip: pin.root || pin.rel_path,
+        badgeText: '',
+        buildChildren: function (pinEl) {
+          appendWikiBranch(pinEl, PREFIX_PINNED + pin.id, pin.wiki);
+          appendPathsBranch(pinEl, PREFIX_PINNED + pin.id, pin.paths);
+        }
+      });
+      if (pin.orphaned) {
+        decorateOrphanGroup(group, {
+          scope: 'pinned',
+          id: pin.id,
+          rel_path: pin.rel_path,
+          root: pin.root || ''
+        });
+      }
+      sec.appendChild(group);
+    });
+    return sec;
+  }
+
+  function renderStandaloneSection(standalone) {
+    const sec = createSection('Standalone', standalone.length);
+    if (standalone.length === 0) {
+      appendEmptyTreeNote(sec, 'No standalone workspaces');
+      return sec;
+    }
+    standalone.forEach(function (st) {
+      const count = (st.state ? 1 : 0) + (st.active || []).length + (st.archive || []).length;
+      sec.appendChild(createCollapsibleGroup({
+        id: 'standalone:' + st.id,
+        label: st.label,
+        defaultOpen: true,
+        strong: true,
+        tooltip: st.id,
+        badgeText: String(count),
+        buildChildren: function (stEl) {
+          appendActiveArchiveBranch(stEl, 'standalone:' + st.id, st.state, st.active, st.archive);
+        }
+      }));
+    });
+    return sec;
+  }
+
   function renderTree() {
     const root = document.getElementById('sidebarTree');
     if (!root) return;
     root.innerHTML = '';
 
     if (!currentTree) {
-      const loading = document.createElement('div');
-      loading.className = 'tree-empty';
-      loading.textContent = 'Loading store...';
-      root.appendChild(loading);
+      appendEmptyTreeNote(root, 'Loading store...');
       return;
     }
 
-    const repos = currentTree.repos || [];
-    const pinned = currentTree.pinned || [];
-    const standalone = currentTree.standalone || [];
+    root.appendChild(renderReposSection(currentTree.repos || []));
+    root.appendChild(renderPinnedSection(currentTree.pinned || []));
+    root.appendChild(renderStandaloneSection(currentTree.standalone || []));
+  }
 
-    // 1. Repos
-    const reposSec = createSection('Repos', repos.length);
-    if (repos.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'tree-empty';
-      empty.textContent = 'No repositories yet';
-      reposSec.appendChild(empty);
-    } else {
-      repos.forEach(function (repo) {
-        reposSec.appendChild(createCollapsibleGroup(
-          'repo:' + repo.id,
-          repo.label,
-          true,
-          true,
-          repo.meta && repo.meta.remote ? repo.meta.remote : repo.id,
-          '',
-          function (repoEl) {
-            appendWikiBranch(repoEl, 'repo:' + repo.id, repo.wiki);
-            (repo.clones || []).forEach(function (clone) {
-              const group = createCollapsibleGroup(
-                'clone:' + repo.id + ':' + clone.id,
-                clone.label,
-                true,
-                false,
-                clone.root || clone.rel_path,
-                String((clone.paths || []).length),
-                function (cloneEl) {
-                  appendPathsBranch(cloneEl, 'clone:' + repo.id + ':' + clone.id, clone.paths);
-                }
-              );
-              if (clone.orphaned) {
-                decorateOrphanGroup(group, {
-                  scope: 'clone',
-                  id: clone.id,
-                  rel_path: clone.rel_path,
-                  root: clone.root || ''
-                });
-              }
-              repoEl.appendChild(group);
-            });
-          }
-        ));
-      });
-    }
-    root.appendChild(reposSec);
-
-    // 2. Pinned Workspaces
-    const pinnedSec = createSection('Pinned Workspaces', pinned.length);
-    if (pinned.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'tree-empty';
-      empty.textContent = 'No pinned workspaces';
-      pinnedSec.appendChild(empty);
-    } else {
-      pinned.forEach(function (pin) {
-        const group = createCollapsibleGroup(
-          'pinned:' + pin.id,
-          pin.label,
-          true,
-          true,
-          pin.root || pin.rel_path,
-          '',
-          function (pinEl) {
-            appendWikiBranch(pinEl, 'pinned:' + pin.id, pin.wiki);
-            appendPathsBranch(pinEl, 'pinned:' + pin.id, pin.paths);
-          }
-        );
-        if (pin.orphaned) {
-          decorateOrphanGroup(group, {
-            scope: 'pinned',
-            id: pin.id,
-            rel_path: pin.rel_path,
-            root: pin.root || ''
-          });
-        }
-        pinnedSec.appendChild(group);
-      });
-    }
-    root.appendChild(pinnedSec);
-
-    // 3. Standalone
-    const standaloneSec = createSection('Standalone', standalone.length);
-    if (standalone.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'tree-empty';
-      empty.textContent = 'No standalone workspaces';
-      standaloneSec.appendChild(empty);
-    } else {
-      standalone.forEach(function (st) {
-        const count = (st.state ? 1 : 0) + (st.active || []).length + (st.archive || []).length;
-        standaloneSec.appendChild(createCollapsibleGroup(
-          'standalone:' + st.id,
-          st.label,
-          true,
-          true,
-          st.id,
-          String(count),
-          function (stEl) {
-            appendActiveArchiveBranch(stEl, 'standalone:' + st.id, st.state, st.active, st.archive);
-          }
-        ));
-      });
-    }
-    root.appendChild(standaloneSec);
+  function setTextById(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(value);
   }
 
   function updateOverviewStats() {
@@ -579,22 +608,17 @@
     const pinned = (currentTree.pinned || []).length;
     const standalone = (currentTree.standalone || []).length;
 
-    const rEl = document.getElementById('statReposCount');
-    const pEl = document.getElementById('statPinnedCount');
-    const sEl = document.getElementById('statStandaloneCount');
-    if (rEl) rEl.textContent = String(repos);
-    if (pEl) pEl.textContent = String(pinned);
-    if (sEl) sEl.textContent = String(standalone);
+    setTextById('statReposCount', repos);
+    setTextById('statPinnedCount', pinned);
+    setTextById('statStandaloneCount', standalone);
 
     const emptyCard = document.getElementById('emptyStoreCard');
-    const emptyPath = document.getElementById('emptyStorePath');
-    if (emptyCard) {
-      if (repos + pinned + standalone === 0) {
-        emptyCard.classList.remove('hidden');
-        if (emptyPath) emptyPath.textContent = currentTree.store_root || '~/.memoir';
-      } else {
-        emptyCard.classList.add('hidden');
-      }
+    if (!emptyCard) return;
+    if (repos + pinned + standalone === 0) {
+      emptyCard.classList.remove('hidden');
+      setTextById('emptyStorePath', currentTree.store_root || '~/.memoir');
+    } else {
+      emptyCard.classList.add('hidden');
     }
   }
 
@@ -610,17 +634,17 @@
       }
       renderTree();
       updateOverviewStats();
-    } catch (_) {
+    } catch {
       showToast('Failed to load Memoir store tree', 'error');
     }
   }
 
   function parseHashFile() {
-    const hash = window.location.hash || '';
-    if (!hash.startsWith('#file=')) return '';
+    const hash = globalThis.location.hash || '';
+    if (!hash.startsWith(HASH_FILE_PREFIX)) return '';
     try {
-      return decodeURIComponent(hash.slice('#file='.length));
-    } catch (_) {
+      return decodeURIComponent(hash.slice(HASH_FILE_PREFIX.length));
+    } catch {
       return '';
     }
   }
@@ -630,9 +654,9 @@
       clearSelection();
       return;
     }
-    const targetHash = '#file=' + encodeURIComponent(relPath);
-    if (window.location.hash !== targetHash) {
-      window.location.hash = targetHash;
+    const targetHash = HASH_FILE_PREFIX + encodeURIComponent(relPath);
+    if (globalThis.location.hash !== targetHash) {
+      globalThis.location.hash = targetHash;
     } else {
       loadFile(relPath);
     }
@@ -641,8 +665,8 @@
   function clearSelection(ev) {
     if (ev) ev.preventDefault();
     activeFilePath = '';
-    if (window.location.hash) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (globalThis.location.hash) {
+      history.replaceState(null, '', globalThis.location.pathname + globalThis.location.search);
     }
     showOverviewView();
     renderTree();
@@ -674,67 +698,77 @@
     applyDocViewMode();
   }
 
-  function renderMetadataBadges(badges, sources) {
+  function createMetadataBadgeEl(b) {
+    const isLink = Boolean(b.target_path || b.url);
+    const el = document.createElement(isLink ? 'a' : 'span');
+    el.className = 'meta-badge';
+    if (b.target_path) {
+      el.href = HASH_FILE_PREFIX + encodeURIComponent(b.target_path);
+      el.onclick = function (ev) {
+        ev.preventDefault();
+        navigateToFile(b.target_path);
+      };
+    } else if (b.url) {
+      el.href = b.url;
+      el.target = '_blank';
+      el.rel = 'noopener noreferrer';
+    }
+    const k = document.createElement('span');
+    k.className = 'meta-badge-key';
+    k.textContent = b.key;
+    const v = document.createElement('span');
+    v.className = 'meta-badge-val mono';
+    v.textContent = b.value;
+    el.appendChild(k);
+    el.appendChild(v);
+    return el;
+  }
+
+  function renderBadgeBar(badges) {
     const bar = document.getElementById('docMetadataBar');
     bar.innerHTML = '';
     const items = badges || [];
     if (items.length === 0) {
       bar.classList.add('hidden');
-    } else {
-      bar.classList.remove('hidden');
-      items.forEach(function (b) {
-        const isLink = Boolean(b.target_path || b.url);
-        const el = document.createElement(isLink ? 'a' : 'span');
-        el.className = 'meta-badge';
-        if (b.target_path) {
-          el.href = '#file=' + encodeURIComponent(b.target_path);
-          el.onclick = function (ev) {
-            ev.preventDefault();
-            navigateToFile(b.target_path);
-          };
-        } else if (b.url) {
-          el.href = b.url;
-          el.target = '_blank';
-          el.rel = 'noopener noreferrer';
-        }
-        const k = document.createElement('span');
-        k.className = 'meta-badge-key';
-        k.textContent = b.key;
-        const v = document.createElement('span');
-        v.className = 'meta-badge-val mono';
-        v.textContent = b.value;
-        el.appendChild(k);
-        el.appendChild(v);
-        bar.appendChild(el);
-      });
+      return;
     }
+    bar.classList.remove('hidden');
+    items.forEach(function (b) { bar.appendChild(createMetadataBadgeEl(b)); });
+  }
 
+  function renderSourcesBar(sources) {
     const srcBar = document.getElementById('docSourcesBar');
     srcBar.innerHTML = '';
     const srcItems = sources || [];
     if (srcItems.length === 0) {
       srcBar.classList.add('hidden');
-    } else {
-      srcBar.classList.remove('hidden');
-      const lbl = document.createElement('span');
-      lbl.className = 'sources-label';
-      lbl.textContent = 'Sources:';
-      srcBar.appendChild(lbl);
-
-      srcItems.forEach(function (s) {
-        const el = document.createElement(s.target_path && !s.broken ? 'a' : 'span');
-        el.className = 'source-pill mono' + (s.broken ? ' broken' : '');
-        el.textContent = s.label;
-        if (s.target_path && !s.broken) {
-          el.href = '#file=' + encodeURIComponent(s.target_path);
-          el.onclick = function (ev) {
-            ev.preventDefault();
-            navigateToFile(s.target_path);
-          };
-        }
-        srcBar.appendChild(el);
-      });
+      return;
     }
+    srcBar.classList.remove('hidden');
+    const lbl = document.createElement('span');
+    lbl.className = 'sources-label';
+    lbl.textContent = 'Sources:';
+    srcBar.appendChild(lbl);
+
+    srcItems.forEach(function (s) {
+      const linked = Boolean(s.target_path && !s.broken);
+      const el = document.createElement(linked ? 'a' : 'span');
+      el.className = 'source-pill mono' + (s.broken ? ' broken' : '');
+      el.textContent = s.label;
+      if (linked) {
+        el.href = HASH_FILE_PREFIX + encodeURIComponent(s.target_path);
+        el.onclick = function (ev) {
+          ev.preventDefault();
+          navigateToFile(s.target_path);
+        };
+      }
+      srcBar.appendChild(el);
+    });
+  }
+
+  function renderMetadataBadges(badges, sources) {
+    renderBadgeBar(badges);
+    renderSourcesBar(sources);
   }
 
   function createArrowSvg() {
@@ -743,6 +777,62 @@
     span.setAttribute('aria-hidden', 'true');
     span.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>';
     return span;
+  }
+
+  function createDecisionStatusBadge(node) {
+    const status = document.createElement('span');
+    if (node.missing) {
+      status.className = CLS_BADGE_DANGER;
+      status.textContent = 'Missing';
+    } else if (node.active_head) {
+      status.className = 'badge ok';
+      status.textContent = 'Active';
+    } else if (node.archived) {
+      status.className = CLS_BADGE_WARN;
+      status.textContent = 'Archived';
+    } else {
+      status.className = CLS_BADGE_ACCENT;
+      status.textContent = 'Decision';
+    }
+    return status;
+  }
+
+  function createDecisionNodeEl(node) {
+    const el = document.createElement(node.missing || !node.path ? 'div' : 'button');
+    if (el.tagName === 'BUTTON') {
+      el.type = 'button';
+      el.onclick = function () { navigateToFile(node.path); };
+    }
+    el.className = 'chain-node';
+    if (node.current) el.classList.add('is-current');
+    if (node.active_head) el.classList.add('is-active-head');
+    if (node.missing) el.classList.add('is-missing');
+
+    const top = document.createElement('div');
+    top.className = 'chain-node-top';
+    top.appendChild(createDecisionStatusBadge(node));
+
+    if (node.date) {
+      const dt = document.createElement('span');
+      dt.className = 'mono';
+      dt.style.fontSize = '0.72rem';
+      dt.style.color = COLOR_MUTED;
+      dt.textContent = node.date;
+      top.appendChild(dt);
+    }
+
+    const title = document.createElement('div');
+    title.className = 'chain-node-title';
+    title.textContent = node.title || node.id;
+
+    const idEl = document.createElement('div');
+    idEl.className = 'chain-node-id mono';
+    idEl.textContent = node.id;
+
+    el.appendChild(top);
+    el.appendChild(title);
+    el.appendChild(idEl);
+    return el;
   }
 
   function renderDecisionChain(chain) {
@@ -759,56 +849,7 @@
       if (idx > 0) {
         track.appendChild(createArrowSvg());
       }
-      const el = document.createElement(node.missing || !node.path ? 'div' : 'button');
-      if (el.tagName === 'BUTTON') {
-        el.type = 'button';
-        el.onclick = function () { navigateToFile(node.path); };
-      }
-      el.className = 'chain-node';
-      if (node.current) el.classList.add('is-current');
-      if (node.active_head) el.classList.add('is-active-head');
-      if (node.missing) el.classList.add('is-missing');
-
-      const top = document.createElement('div');
-      top.className = 'chain-node-top';
-
-      const status = document.createElement('span');
-      if (node.missing) {
-        status.className = 'badge danger';
-        status.textContent = 'Missing';
-      } else if (node.active_head) {
-        status.className = 'badge ok';
-        status.textContent = 'Active';
-      } else if (node.archived) {
-        status.className = 'badge warn';
-        status.textContent = 'Archived';
-      } else {
-        status.className = 'badge accent';
-        status.textContent = 'Decision';
-      }
-      top.appendChild(status);
-
-      if (node.date) {
-        const dt = document.createElement('span');
-        dt.className = 'mono';
-        dt.style.fontSize = '0.72rem';
-        dt.style.color = 'var(--muted)';
-        dt.textContent = node.date;
-        top.appendChild(dt);
-      }
-
-      const title = document.createElement('div');
-      title.className = 'chain-node-title';
-      title.textContent = node.title || node.id;
-
-      const idEl = document.createElement('div');
-      idEl.className = 'chain-node-id mono';
-      idEl.textContent = node.id;
-
-      el.appendChild(top);
-      el.appendChild(title);
-      el.appendChild(idEl);
-      track.appendChild(el);
+      track.appendChild(createDecisionNodeEl(node));
     });
   }
 
@@ -829,7 +870,7 @@
 
     if (items.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'empty-note';
+      empty.className = CLS_EMPTY_NOTE;
       empty.textContent = 'No inbound backlinks from other wiki pages yet.';
       list.appendChild(empty);
       return;
@@ -850,7 +891,7 @@
 
       if (bl.cross_wiki) {
         const pill = document.createElement('span');
-        pill.className = 'badge accent';
+        pill.className = CLS_BADGE_ACCENT;
         pill.textContent = 'cross-wiki: ' + bl.source_scope;
         top.appendChild(pill);
       } else if (bl.kind && bl.kind !== 'page') {
@@ -863,7 +904,7 @@
       const pathEl = document.createElement('div');
       pathEl.className = 'mono';
       pathEl.style.fontSize = '0.73rem';
-      pathEl.style.color = 'var(--muted)';
+      pathEl.style.color = COLOR_MUTED;
       pathEl.textContent = bl.source_path;
 
       card.appendChild(top);
@@ -894,13 +935,13 @@
     badges.innerHTML = '';
     if (doc.kind) {
       const k = document.createElement('span');
-      k.className = 'badge accent';
+      k.className = CLS_BADGE_ACCENT;
       k.textContent = doc.kind;
       badges.appendChild(k);
     }
     if (doc.archived) {
       const a = document.createElement('span');
-      a.className = 'badge warn';
+      a.className = CLS_BADGE_WARN;
       a.textContent = 'archived';
       badges.appendChild(a);
     }
@@ -938,7 +979,7 @@
       }
       const doc = await res.json();
       showDocumentView(doc);
-    } catch (_) {
+    } catch {
       showToast('Failed to load file', 'error');
     }
   }
@@ -953,7 +994,7 @@
     row.appendChild(headerBtn);
 
     const badge = document.createElement('span');
-    badge.className = 'badge danger mini-badge';
+    badge.className = CLS_BADGE_DANGER + ' mini-badge';
     badge.textContent = 'Orphaned';
     badge.title = 'Root directory missing: ' + (orphanInfo.root || '');
 
@@ -988,7 +1029,9 @@
       if (document.getElementById('orphansModal').classList.contains('open')) {
         renderOrphansList();
       }
-    } catch (_) {}
+    } catch {
+      // Ignore transient polling failures; manual refresh or next SSE event retries.
+    }
   }
 
   function openOrphansModal() {
@@ -1007,7 +1050,7 @@
 
     if (currentOrphans.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'empty-note';
+      empty.className = CLS_EMPTY_NOTE;
       empty.textContent = 'No orphaned clones or pinned workspaces detected.';
       list.appendChild(empty);
       return;
@@ -1025,7 +1068,7 @@
       top.style.alignItems = 'center';
       top.style.gap = '6px';
       const badge = document.createElement('span');
-      badge.className = 'badge danger';
+      badge.className = CLS_BADGE_DANGER;
       badge.textContent = item.scope;
       const pathEl = document.createElement('strong');
       pathEl.className = 'mono';
@@ -1035,7 +1078,7 @@
 
       const rootLine = document.createElement('div');
       rootLine.className = 'mono';
-      rootLine.style.color = 'var(--muted)';
+      rootLine.style.color = COLOR_MUTED;
       rootLine.style.marginTop = '4px';
       rootLine.textContent = 'Missing root: ' + item.root;
 
@@ -1101,7 +1144,7 @@
       }
       showToast('Pruned ' + targetPath, 'success');
       await refreshAll();
-    } catch (_) {
+    } catch {
       errBox.textContent = 'Request failed';
       errBox.classList.remove('hidden');
       btn.disabled = false;
@@ -1168,12 +1211,10 @@
       }
       return;
     }
-    if (ev.key === 'Enter') {
+    if (ev.key === 'Enter' && searchResultsList[searchSelectedIdx]) {
       ev.preventDefault();
-      if (searchResultsList[searchSelectedIdx]) {
-        closeSearchModal();
-        navigateToFile(searchResultsList[searchSelectedIdx].path);
-      }
+      closeSearchModal();
+      navigateToFile(searchResultsList[searchSelectedIdx].path);
     }
   }
 
@@ -1193,7 +1234,23 @@
       searchResultsList = data.results || [];
       searchSelectedIdx = 0;
       renderSearchResults();
-    } catch (_) {}
+    } catch {
+      // Ignore transient search fetch failures while typing.
+    }
+  }
+
+  function findNextHighlightMatch(lower, tokens, cursor) {
+    let bestIdx = -1;
+    let bestLen = 0;
+    for (const tok of tokens) {
+      if (!tok) continue;
+      const found = lower.indexOf(tok, cursor);
+      if (found >= 0 && (bestIdx < 0 || found < bestIdx)) {
+        bestIdx = found;
+        bestLen = tok.length;
+      }
+    }
+    return { bestIdx: bestIdx, bestLen: bestLen };
   }
 
   function appendHighlightedText(parent, text, tokens) {
@@ -1205,28 +1262,18 @@
     const lower = text.toLowerCase();
     let cursor = 0;
     while (cursor < text.length) {
-      let bestIdx = -1;
-      let bestLen = 0;
-      for (let i = 0; i < tokens.length; i++) {
-        const tok = tokens[i];
-        if (!tok) continue;
-        const found = lower.indexOf(tok, cursor);
-        if (found >= 0 && (bestIdx < 0 || found < bestIdx)) {
-          bestIdx = found;
-          bestLen = tok.length;
-        }
-      }
-      if (bestIdx < 0) {
+      const match = findNextHighlightMatch(lower, tokens, cursor);
+      if (match.bestIdx < 0) {
         parent.appendChild(document.createTextNode(text.slice(cursor)));
         break;
       }
-      if (bestIdx > cursor) {
-        parent.appendChild(document.createTextNode(text.slice(cursor, bestIdx)));
+      if (match.bestIdx > cursor) {
+        parent.appendChild(document.createTextNode(text.slice(cursor, match.bestIdx)));
       }
       const mark = document.createElement('mark');
-      mark.textContent = text.slice(bestIdx, bestIdx + bestLen);
+      mark.textContent = text.slice(match.bestIdx, match.bestIdx + match.bestLen);
       parent.appendChild(mark);
-      cursor = bestIdx + bestLen;
+      cursor = match.bestIdx + match.bestLen;
     }
   }
 
@@ -1237,7 +1284,7 @@
 
     if (searchResultsList.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'empty-note';
+      empty.className = CLS_EMPTY_NOTE;
       empty.style.padding = '12px 4px';
       empty.textContent = 'No matching fragments or wiki pages found.';
       container.appendChild(empty);
@@ -1272,13 +1319,13 @@
       badges.appendChild(scopeBadge);
 
       const typeBadge = document.createElement('span');
-      typeBadge.className = 'badge accent';
+      typeBadge.className = CLS_BADGE_ACCENT;
       typeBadge.textContent = item.type;
       badges.appendChild(typeBadge);
 
       if (item.archived) {
         const archBadge = document.createElement('span');
-        archBadge.className = 'badge warn';
+        archBadge.className = CLS_BADGE_WARN;
         archBadge.textContent = 'archived';
         badges.appendChild(archBadge);
       }
@@ -1310,6 +1357,15 @@
     }
   }
 
+  function bindModalBackdrops() {
+    ['searchModal', 'orphansModal', 'pruneModal'].forEach(function (modalId) {
+      const el = document.getElementById(modalId);
+      if (el) {
+        el.addEventListener('click', function (ev) { onModalBackdropClick(ev, modalId); });
+      }
+    });
+  }
+
   async function refreshAll() {
     await Promise.all([refreshTree(), refreshOrphans()]);
     if (activeFilePath) {
@@ -1332,13 +1388,17 @@
       let ev = { type: 'change' };
       try {
         ev = JSON.parse(msg.data);
-      } catch (_) {}
+      } catch {
+        // Fall back to default change marker when payload is non-JSON.
+      }
       recordEventRow(ev);
       refreshAll();
       changeListeners.forEach(function (fn) {
         try {
           fn(ev);
-        } catch (_) {}
+        } catch {
+          // Isolate subscriber errors so other listeners continue firing.
+        }
       });
     });
 
@@ -1347,7 +1407,7 @@
     };
   }
 
-  window.addEventListener('hashchange', function () {
+  globalThis.addEventListener('hashchange', function () {
     const target = parseHashFile();
     if (target) loadFile(target);
     else {
@@ -1357,25 +1417,25 @@
     }
   });
 
-  window.applyTheme = applyTheme;
-  window.refreshAll = refreshAll;
-  window.clearEventLog = clearEventLog;
-  window.clearSelection = clearSelection;
-  window.setAllExpanded = setAllExpanded;
-  window.navigateToFile = navigateToFile;
-  window.toggleDocViewMode = toggleDocViewMode;
-  window.openSearchModal = openSearchModal;
-  window.closeSearchModal = closeSearchModal;
-  window.setSearchScope = setSearchScope;
-  window.setSearchType = setSearchType;
-  window.onSearchInput = onSearchInput;
-  window.onSearchKeyDown = onSearchKeyDown;
-  window.openOrphansModal = openOrphansModal;
-  window.closeOrphansModal = closeOrphansModal;
-  window.openPruneModal = openPruneModal;
-  window.closePruneModal = closePruneModal;
-  window.confirmPruneOrphan = confirmPruneOrphan;
-  window.onModalBackdropClick = onModalBackdropClick;
+  globalThis.applyTheme = applyTheme;
+  globalThis.refreshAll = refreshAll;
+  globalThis.clearEventLog = clearEventLog;
+  globalThis.clearSelection = clearSelection;
+  globalThis.setAllExpanded = setAllExpanded;
+  globalThis.navigateToFile = navigateToFile;
+  globalThis.toggleDocViewMode = toggleDocViewMode;
+  globalThis.openSearchModal = openSearchModal;
+  globalThis.closeSearchModal = closeSearchModal;
+  globalThis.setSearchScope = setSearchScope;
+  globalThis.setSearchType = setSearchType;
+  globalThis.onSearchInput = onSearchInput;
+  globalThis.onSearchKeyDown = onSearchKeyDown;
+  globalThis.openOrphansModal = openOrphansModal;
+  globalThis.closeOrphansModal = closeOrphansModal;
+  globalThis.openPruneModal = openPruneModal;
+  globalThis.closePruneModal = closePruneModal;
+  globalThis.confirmPruneOrphan = confirmPruneOrphan;
+  globalThis.onModalBackdropClick = onModalBackdropClick;
 
   document.addEventListener('keydown', function (ev) {
     if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') {
@@ -1396,7 +1456,8 @@
 
   (function setShortcutLabel() {
     const kbd = document.getElementById('searchShortcutKey');
-    if (kbd && navigator.platform && navigator.platform.toLowerCase().indexOf('mac') === -1) {
+    const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent || '';
+    if (kbd && platform && !platform.toLowerCase().includes('mac')) {
       kbd.textContent = 'Ctrl+K';
     }
   })();
@@ -1410,7 +1471,7 @@
       navigateToFile(targetPath);
     }
   });
-  window.memoirEvents = {
+  globalThis.memoirEvents = {
     onStoreChange: function (fn) {
       changeListeners.add(fn);
       return function () { changeListeners.delete(fn); };
@@ -1419,6 +1480,7 @@
 
   initTheme();
   initSidebarResize();
+  bindModalBackdrops();
   connectSSE();
   Promise.all([refreshTree(), refreshOrphans()]).then(function () {
     const initial = parseHashFile();

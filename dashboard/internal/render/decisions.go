@@ -48,141 +48,18 @@ func BuildDecisionChain(storeRoot, relPath string) (*DecisionChain, error) {
 		return nil, nil
 	}
 	currentID := canonicalDecisionName(path.Base(cleanRel))
-
-	nodesByID := make(map[string]DecisionNode)
-	edgeSet := make(map[DecisionEdge]bool)
-
-	for _, dirInfo := range []struct {
-		sub      string
-		archived bool
-	}{
-		{sub: "archive", archived: true},
-		{sub: "active", archived: false},
-	} {
-		dirAbs := filepath.Join(storeRoot, filepath.FromSlash(path.Join(scopeRel, dirInfo.sub)))
-		entries, err := os.ReadDir(dirAbs)
-		if err != nil {
-			continue
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Name() < entries[j].Name()
-		})
-
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			canon := canonicalDecisionName(entry.Name())
-			if !strings.HasPrefix(canon, "decision-") {
-				continue
-			}
-
-			fileRel := path.Join(scopeRel, dirInfo.sub, entry.Name())
-			fileAbs := filepath.Join(dirAbs, entry.Name())
-			rawBytes, err := os.ReadFile(fileAbs)
-			if err != nil {
-				continue
-			}
-
-			parsed := parseHeaderAndBody(storeRoot, fileRel, string(rawBytes))
-			dateVal := ""
-			for _, b := range parsed.Badges {
-				switch b.Key {
-				case "Date":
-					dateVal = b.Value
-				case "Supersedes":
-					for _, older := range extractDecisionTargets(b.Value, canon) {
-						edgeSet[DecisionEdge{From: older, To: canon}] = true
-					}
-				case "Superseded-By":
-					for _, newer := range extractDecisionTargets(b.Value, canon) {
-						edgeSet[DecisionEdge{From: canon, To: newer}] = true
-					}
-				}
-			}
-
-			existing, exists := nodesByID[canon]
-			// Active file supersedes archived copy if both briefly coexist; newer archive wins among archives.
-			if !exists || (!dirInfo.archived && existing.Archived) || (dirInfo.archived && existing.Archived && entry.Name() > path.Base(existing.Path)) {
-				nodesByID[canon] = DecisionNode{
-					ID:       canon,
-					Title:    parsed.Title,
-					Path:     fileRel,
-					Date:     dateVal,
-					Archived: dirInfo.archived,
-					Current:  fileRel == cleanRel,
-				}
-			}
-		}
-	}
-
+	nodesByID, edgeSet := scanScopeDecisions(storeRoot, scopeRel, cleanRel)
 	if len(edgeSet) == 0 {
 		return nil, nil
 	}
 
-	// Ensure referenced missing nodes are represented.
-	for edge := range edgeSet {
-		if _, ok := nodesByID[edge.From]; !ok {
-			nodesByID[edge.From] = DecisionNode{
-				ID:      edge.From,
-				Title:   strings.TrimSuffix(edge.From, ".md"),
-				Missing: true,
-			}
-		}
-		if _, ok := nodesByID[edge.To]; !ok {
-			nodesByID[edge.To] = DecisionNode{
-				ID:      edge.To,
-				Title:   strings.TrimSuffix(edge.To, ".md"),
-				Missing: true,
-			}
-		}
-	}
-
-	// Find connected component containing currentID via undirected BFS.
-	adjUndir := make(map[string][]string)
-	for edge := range edgeSet {
-		adjUndir[edge.From] = append(adjUndir[edge.From], edge.To)
-		adjUndir[edge.To] = append(adjUndir[edge.To], edge.From)
-	}
-	if len(adjUndir[currentID]) == 0 {
+	addMissingDecisionNodes(nodesByID, edgeSet)
+	component := connectedDecisionComponent(currentID, edgeSet)
+	if len(component) == 0 {
 		return nil, nil
 	}
 
-	component := make(map[string]bool)
-	queue := []string{currentID}
-	component[currentID] = true
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, nxt := range adjUndir[cur] {
-			if !component[nxt] {
-				component[nxt] = true
-				queue = append(queue, nxt)
-			}
-		}
-	}
-
-	var edges []DecisionEdge
-	outDeg := make(map[string]int)
-	inDeg := make(map[string]int)
-	adjOut := make(map[string][]string)
-
-	for edge := range edgeSet {
-		if component[edge.From] && component[edge.To] {
-			edges = append(edges, edge)
-			outDeg[edge.From]++
-			inDeg[edge.To]++
-			adjOut[edge.From] = append(adjOut[edge.From], edge.To)
-		}
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
-		}
-		return edges[i].To < edges[j].To
-	})
-
-	// Topological sort (oldest -> newest) with cycle protection.
+	edges, outDeg, inDeg, adjOut := buildComponentEdges(component, edgeSet)
 	orderedIDs := topoSortComponent(component, inDeg, adjOut)
 	nodes := make([]DecisionNode, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
@@ -202,6 +79,188 @@ func BuildDecisionChain(storeRoot, relPath string) (*DecisionChain, error) {
 	}, nil
 }
 
+func scanScopeDecisions(storeRoot, scopeRel, cleanRel string) (map[string]DecisionNode, map[DecisionEdge]bool) {
+	nodesByID := make(map[string]DecisionNode)
+	edgeSet := make(map[DecisionEdge]bool)
+	for _, dirInfo := range []struct {
+		sub      string
+		archived bool
+	}{
+		{sub: dirArchive, archived: true},
+		{sub: dirActive, archived: false},
+	} {
+		scanDecisionSubdir(storeRoot, scopeRel, dirInfo.sub, cleanRel, dirInfo.archived, nodesByID, edgeSet)
+	}
+	return nodesByID, edgeSet
+}
+
+func ingestDecisionFile(
+	storeRoot, scopeRel, sub, cleanRel, dirAbs, entryName string,
+	archived bool,
+	nodesByID map[string]DecisionNode,
+	edgeSet map[DecisionEdge]bool,
+) {
+	if !strings.HasSuffix(entryName, extMD) {
+		return
+	}
+	canon := canonicalDecisionName(entryName)
+	if !strings.HasPrefix(canon, "decision-") {
+		return
+	}
+	fileRel := path.Join(scopeRel, sub, entryName)
+	rawBytes, err := os.ReadFile(filepath.Join(dirAbs, entryName))
+	if err != nil {
+		return
+	}
+
+	parsed := parseHeaderAndBody(storeRoot, fileRel, string(rawBytes))
+	dateVal := collectDecisionEdges(parsed.Badges, canon, edgeSet)
+	if existing, exists := nodesByID[canon]; shouldReplaceDecisionNode(existing, exists, archived, entryName) {
+		nodesByID[canon] = DecisionNode{
+			ID:       canon,
+			Title:    parsed.Title,
+			Path:     fileRel,
+			Date:     dateVal,
+			Archived: archived,
+			Current:  fileRel == cleanRel,
+		}
+	}
+}
+
+func scanDecisionSubdir(
+	storeRoot, scopeRel, sub, cleanRel string,
+	archived bool,
+	nodesByID map[string]DecisionNode,
+	edgeSet map[DecisionEdge]bool,
+) {
+	dirAbs := filepath.Join(storeRoot, filepath.FromSlash(path.Join(scopeRel, sub)))
+	entries, err := os.ReadDir(dirAbs)
+	if err != nil {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ingestDecisionFile(storeRoot, scopeRel, sub, cleanRel, dirAbs, entry.Name(), archived, nodesByID, edgeSet)
+	}
+}
+
+func collectDecisionEdges(badges []MetadataBadge, canon string, edgeSet map[DecisionEdge]bool) string {
+	dateVal := ""
+	for _, b := range badges {
+		switch b.Key {
+		case hdrDate:
+			dateVal = b.Value
+		case hdrSupersedes:
+			for _, older := range extractDecisionTargets(b.Value, canon) {
+				edgeSet[DecisionEdge{From: older, To: canon}] = true
+			}
+		case hdrSupersededBy:
+			for _, newer := range extractDecisionTargets(b.Value, canon) {
+				edgeSet[DecisionEdge{From: canon, To: newer}] = true
+			}
+		}
+	}
+	return dateVal
+}
+
+func shouldReplaceDecisionNode(existing DecisionNode, exists, archived bool, entryName string) bool {
+	if !exists {
+		return true
+	}
+	// Active file supersedes archived copy if both briefly coexist; newer archive wins among archives.
+	if !archived && existing.Archived {
+		return true
+	}
+	return archived && existing.Archived && entryName > path.Base(existing.Path)
+}
+
+func addMissingDecisionNodes(nodesByID map[string]DecisionNode, edgeSet map[DecisionEdge]bool) {
+	ensureMissing := func(id string) {
+		if _, ok := nodesByID[id]; !ok {
+			nodesByID[id] = DecisionNode{
+				ID:      id,
+				Title:   strings.TrimSuffix(id, extMD),
+				Missing: true,
+			}
+		}
+	}
+	for edge := range edgeSet {
+		ensureMissing(edge.From)
+		ensureMissing(edge.To)
+	}
+}
+
+func connectedDecisionComponent(currentID string, edgeSet map[DecisionEdge]bool) map[string]bool {
+	adjUndir := make(map[string][]string)
+	for edge := range edgeSet {
+		adjUndir[edge.From] = append(adjUndir[edge.From], edge.To)
+		adjUndir[edge.To] = append(adjUndir[edge.To], edge.From)
+	}
+	if len(adjUndir[currentID]) == 0 {
+		return nil
+	}
+
+	component := map[string]bool{currentID: true}
+	for queue := []string{currentID}; len(queue) > 0; {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, nxt := range adjUndir[cur] {
+			if !component[nxt] {
+				component[nxt] = true
+				queue = append(queue, nxt)
+			}
+		}
+	}
+	return component
+}
+
+func buildComponentEdges(component map[string]bool, edgeSet map[DecisionEdge]bool) ([]DecisionEdge, map[string]int, map[string]int, map[string][]string) {
+	var edges []DecisionEdge
+	outDeg := make(map[string]int)
+	inDeg := make(map[string]int)
+	adjOut := make(map[string][]string)
+
+	for edge := range edgeSet {
+		if component[edge.From] && component[edge.To] {
+			edges = append(edges, edge)
+			outDeg[edge.From]++
+			inDeg[edge.To]++
+			adjOut[edge.From] = append(adjOut[edge.From], edge.To)
+		}
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		return edges[i].To < edges[j].To
+	})
+	return edges, outDeg, inDeg, adjOut
+}
+
+func nextTopoNode(remaining map[string]bool, inDeg map[string]int) string {
+	var ready []string
+	var all []string
+	for id := range remaining {
+		all = append(all, id)
+		if inDeg[id] == 0 {
+			ready = append(ready, id)
+		}
+	}
+	if len(ready) > 0 {
+		sort.Strings(ready)
+		return ready[0]
+	}
+	// Cycle detected: deterministically pick the smallest remaining ID to break it.
+	sort.Strings(all)
+	return all[0]
+}
+
 func topoSortComponent(component map[string]bool, inDeg map[string]int, adjOut map[string][]string) []string {
 	remaining := make(map[string]bool, len(component))
 	for k := range component {
@@ -210,25 +269,7 @@ func topoSortComponent(component map[string]bool, inDeg map[string]int, adjOut m
 
 	ordered := make([]string, 0, len(component))
 	for len(remaining) > 0 {
-		var ready []string
-		for id := range remaining {
-			if inDeg[id] == 0 {
-				ready = append(ready, id)
-			}
-		}
-		sort.Strings(ready)
-
-		if len(ready) == 0 {
-			// Cycle detected: deterministically pick the smallest remaining ID to break it.
-			var rest []string
-			for id := range remaining {
-				rest = append(rest, id)
-			}
-			sort.Strings(rest)
-			ready = []string{rest[0]}
-		}
-
-		cur := ready[0]
+		cur := nextTopoNode(remaining, inDeg)
 		ordered = append(ordered, cur)
 		delete(remaining, cur)
 		for _, nxt := range adjOut[cur] {
@@ -244,7 +285,7 @@ func pathScopeRelDir(relPath string) (string, bool) {
 	clean := path.Clean(relPath)
 	dir := path.Dir(clean)
 	baseDir := path.Base(dir)
-	if baseDir != "active" && baseDir != "archive" {
+	if baseDir != dirActive && baseDir != dirArchive {
 		return "", false
 	}
 	return path.Dir(dir), true

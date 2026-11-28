@@ -1,4 +1,27 @@
+// Package store scans, validates, indexes, and prunes local Memoir store directories.
 package store
+
+const (
+	dirRepos          = "repos"
+	dirPinned         = "pinned"
+	dirStandalone     = "standalone"
+	dirClones         = "clones"
+	dirPaths          = "paths"
+	dirActive         = "active"
+	dirArchive        = "archive"
+	dirWiki           = "wiki"
+	fileCloneJSON     = "clone.json"
+	fileWorkspaceJSON = "workspace.json"
+	fileScopeJSON     = "scope.json"
+	filePinnedJSON    = "pinned.json"
+	fileMetaJSON      = "meta.json"
+	fileStateCurrent  = "state-current.md"
+	keyMain           = "_main"
+	keyRoot           = "_root"
+	labelRoot         = "root"
+	scopeRepo         = "repo"
+	extMD             = ".md"
+)
 
 // Tree represents the hierarchical contents of a Memoir store root.
 type Tree struct {

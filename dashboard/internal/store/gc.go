@@ -53,68 +53,12 @@ func ListOrphans(storeRoot string) ([]Orphan, error) {
 		return nil, err
 	}
 
-	// 1. Clones under repos/<repo_id>/clones/<clone_id>/clone.json
-	reposDir := filepath.Join(absRoot, "repos")
-	if repoEntries, err := os.ReadDir(reposDir); err == nil {
-		for _, repoEntry := range sortedDirEntries(repoEntries) {
-			if !repoEntry.IsDir() || strings.HasPrefix(repoEntry.Name(), ".") {
-				continue
-			}
-			clonesDir := filepath.Join(reposDir, repoEntry.Name(), "clones")
-			cloneEntries, err := os.ReadDir(clonesDir)
-			if err != nil {
-				continue
-			}
-			for _, cloneEntry := range sortedDirEntries(cloneEntries) {
-				if !cloneEntry.IsDir() || strings.HasPrefix(cloneEntry.Name(), ".") {
-					continue
-				}
-				cloneAbs := filepath.Join(clonesDir, cloneEntry.Name())
-				recordAbs := filepath.Join(cloneAbs, "clone.json")
-				if !isConfinedRegularFile(canonRoot, cloneAbs, recordAbs) {
-					continue
-				}
-				rec := readScopeRecord(recordAbs)
-				if CheckRootOrphaned(rec.Root) {
-					out = append(out, Orphan{
-						Scope:    "clone",
-						ID:       cloneEntry.Name(),
-						RelPath:  path.Join("repos", repoEntry.Name(), "clones", cloneEntry.Name()),
-						Root:     rec.Root,
-						LastSeen: rec.LastSeen,
-					})
-				}
-			}
-		}
-	}
-
-	// 2. Pinned workspaces under pinned/<slug>/workspace.json and
-	// 3. standalone scopes under standalone/<slug>/scope.json
-	for _, flat := range []struct{ dir, record string }{{"pinned", "workspace.json"}, {"standalone", "scope.json"}} {
-		entries, err := os.ReadDir(filepath.Join(absRoot, flat.dir))
-		if err != nil {
-			continue
-		}
-		for _, entry := range sortedDirEntries(entries) {
-			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-				continue
-			}
-			dirAbs := filepath.Join(absRoot, flat.dir, entry.Name())
-			recordAbs := filepath.Join(dirAbs, flat.record)
-			if !isConfinedRegularFile(canonRoot, dirAbs, recordAbs) {
-				continue
-			}
-			rec := readScopeRecord(recordAbs)
-			if CheckRootOrphaned(rec.Root) {
-				out = append(out, Orphan{
-					Scope:    flat.dir,
-					ID:       entry.Name(),
-					RelPath:  path.Join(flat.dir, entry.Name()),
-					Root:     rec.Root,
-					LastSeen: rec.LastSeen,
-				})
-			}
-		}
+	out = append(out, listRepoCloneOrphans(absRoot, canonRoot)...)
+	for _, flat := range []struct{ dir, record string }{
+		{dirPinned, fileWorkspaceJSON},
+		{dirStandalone, fileScopeJSON},
+	} {
+		out = append(out, listFlatScopeOrphans(absRoot, canonRoot, flat.dir, flat.record)...)
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -123,67 +67,141 @@ func ListOrphans(storeRoot string) ([]Orphan, error) {
 	return out, nil
 }
 
-// PruneOrphan safely deletes an orphaned clone, pinned or standalone folder after confirming
-// path shape, symlink confinement inside storeRoot, and live missing-root verification.
-func PruneOrphan(storeRoot, targetRelPath string) error {
+func listRepoCloneOrphans(absRoot, canonRoot string) []Orphan {
+	reposDir := filepath.Join(absRoot, dirRepos)
+	repoEntries, err := os.ReadDir(reposDir)
+	if err != nil {
+		return nil
+	}
+	var out []Orphan
+	for _, repoEntry := range sortedDirEntries(repoEntries) {
+		if !repoEntry.IsDir() || strings.HasPrefix(repoEntry.Name(), ".") {
+			continue
+		}
+		out = append(out, listCloneOrphansInRepo(canonRoot, reposDir, repoEntry.Name())...)
+	}
+	return out
+}
+
+func listCloneOrphansInRepo(canonRoot, reposDir, repoName string) []Orphan {
+	clonesDir := filepath.Join(reposDir, repoName, dirClones)
+	cloneEntries, err := os.ReadDir(clonesDir)
+	if err != nil {
+		return nil
+	}
+	var out []Orphan
+	for _, cloneEntry := range sortedDirEntries(cloneEntries) {
+		if !cloneEntry.IsDir() || strings.HasPrefix(cloneEntry.Name(), ".") {
+			continue
+		}
+		cloneAbs := filepath.Join(clonesDir, cloneEntry.Name())
+		recordAbs := filepath.Join(cloneAbs, fileCloneJSON)
+		if !isConfinedRegularFile(canonRoot, cloneAbs, recordAbs) {
+			continue
+		}
+		rec := readScopeRecord(recordAbs)
+		if CheckRootOrphaned(rec.Root) {
+			out = append(out, Orphan{
+				Scope:    "clone",
+				ID:       cloneEntry.Name(),
+				RelPath:  path.Join(dirRepos, repoName, dirClones, cloneEntry.Name()),
+				Root:     rec.Root,
+				LastSeen: rec.LastSeen,
+			})
+		}
+	}
+	return out
+}
+
+func listFlatScopeOrphans(absRoot, canonRoot, dirName, recordName string) []Orphan {
+	entries, err := os.ReadDir(filepath.Join(absRoot, dirName))
+	if err != nil {
+		return nil
+	}
+	var out []Orphan
+	for _, entry := range sortedDirEntries(entries) {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		dirAbs := filepath.Join(absRoot, dirName, entry.Name())
+		recordAbs := filepath.Join(dirAbs, recordName)
+		if !isConfinedRegularFile(canonRoot, dirAbs, recordAbs) {
+			continue
+		}
+		rec := readScopeRecord(recordAbs)
+		if CheckRootOrphaned(rec.Root) {
+			out = append(out, Orphan{
+				Scope:    dirName,
+				ID:       entry.Name(),
+				RelPath:  path.Join(dirName, entry.Name()),
+				Root:     rec.Root,
+				LastSeen: rec.LastSeen,
+			})
+		}
+	}
+	return out
+}
+
+func expectedOrphanRecord(targetRelPath string) (string, error) {
 	if targetRelPath == "" || strings.ContainsRune(targetRelPath, 0) || strings.Contains(targetRelPath, "\\") {
-		return ErrInvalidPath
+		return "", ErrInvalidPath
 	}
 	if strings.HasPrefix(targetRelPath, "/") || filepath.IsAbs(targetRelPath) {
-		return ErrInvalidPath
+		return "", ErrInvalidPath
 	}
 
 	parts := strings.Split(targetRelPath, "/")
 	for _, seg := range parts {
 		if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, ".") {
-			return ErrInvalidPath
+			return "", ErrInvalidPath
 		}
 	}
 
-	var recordName string
 	switch {
-	case len(parts) == 4 && parts[0] == "repos" && parts[2] == "clones":
-		recordName = "clone.json"
-	case len(parts) == 2 && parts[0] == "pinned":
-		recordName = "workspace.json"
-	case len(parts) == 2 && parts[0] == "standalone":
-		recordName = "scope.json"
+	case len(parts) == 4 && parts[0] == dirRepos && parts[2] == dirClones:
+		return fileCloneJSON, nil
+	case len(parts) == 2 && parts[0] == dirPinned:
+		return fileWorkspaceJSON, nil
+	case len(parts) == 2 && parts[0] == dirStandalone:
+		return fileScopeJSON, nil
 	default:
-		return ErrInvalidPath
+		return "", ErrInvalidPath
 	}
+}
 
+func resolveConfinedOrphanTarget(storeRoot, targetRelPath string) (string, string, error) {
 	absRoot, err := filepath.Abs(storeRoot)
 	if err != nil {
-		return ErrInvalidPath
+		return "", "", ErrInvalidPath
 	}
 	canonRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ErrNotFound
+			return "", "", ErrNotFound
 		}
-		return err
+		return "", "", err
 	}
 
 	targetAbs := filepath.Join(absRoot, filepath.FromSlash(path.Clean(targetRelPath)))
 	info, err := os.Lstat(targetAbs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ErrNotFound
+			return "", "", ErrNotFound
 		}
-		return err
+		return "", "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return ErrInvalidPath
+		return "", "", ErrInvalidPath
 	}
 
 	canonTarget, err := filepath.EvalSymlinks(targetAbs)
-	if err != nil {
-		return ErrInvalidPath
+	if err != nil || !isStrictlyInside(canonRoot, canonTarget) {
+		return "", "", ErrInvalidPath
 	}
-	if !isStrictlyInside(canonRoot, canonTarget) {
-		return ErrInvalidPath
-	}
+	return targetAbs, canonTarget, nil
+}
 
+func verifyOrphanRecord(targetAbs, recordName string) error {
 	recordAbs := filepath.Join(targetAbs, recordName)
 	recLstat, err := os.Lstat(recordAbs)
 	if err != nil {
@@ -201,16 +219,29 @@ func PruneOrphan(storeRoot, targetRelPath string) error {
 		return err
 	}
 	var rec scopeRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return ErrInvalidPath
-	}
-	if !filepath.IsAbs(rec.Root) {
+	if err := json.Unmarshal(data, &rec); err != nil || !filepath.IsAbs(rec.Root) {
 		return ErrInvalidPath
 	}
 	if !CheckRootOrphaned(rec.Root) {
 		return ErrNotOrphaned
 	}
+	return nil
+}
 
+// PruneOrphan safely deletes an orphaned clone, pinned or standalone folder after confirming
+// path shape, symlink confinement inside storeRoot, and live missing-root verification.
+func PruneOrphan(storeRoot, targetRelPath string) error {
+	recordName, err := expectedOrphanRecord(targetRelPath)
+	if err != nil {
+		return err
+	}
+	targetAbs, canonTarget, err := resolveConfinedOrphanTarget(storeRoot, targetRelPath)
+	if err != nil {
+		return err
+	}
+	if err := verifyOrphanRecord(targetAbs, recordName); err != nil {
+		return err
+	}
 	return os.RemoveAll(canonTarget)
 }
 
